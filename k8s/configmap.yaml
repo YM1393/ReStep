@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: 10mwt
+  labels:
+    app.kubernetes.io/part-of: 10mwt
+data:
+  UPLOAD_DIR: "/app/uploads"
+  DB_PATH: "/data/database.db"
+  LOG_LEVEL: "info"
