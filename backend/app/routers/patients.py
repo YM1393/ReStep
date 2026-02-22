@@ -112,6 +112,12 @@ async def get_patients(limit: int = Query(default=50, le=100)):
     return result
 
 
+@router.get("/with-latest-test")
+async def get_patients_with_latest_test(limit: int = Query(default=50, le=100)):
+    """환자 목록 + 최신 검사 정보 (단일 쿼리)"""
+    return db.get_patients_with_latest_test(limit)
+
+
 @router.get("/search", response_model=List[PatientResponse])
 async def search_patients(q: str = Query(..., min_length=1)):
     """환자 검색 (이름 또는 환자번호) - 모든 로그인 사용자"""

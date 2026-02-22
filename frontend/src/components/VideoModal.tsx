@@ -19,7 +19,9 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showPoseOverlay, setShowPoseOverlay] = useState(true);  // 포즈 오버레이 기본 ON
-  const [overlayType, setOverlayType] = useState<OverlayVideoType>('front'); // TUG는 기본 정면
+  const [overlayType, setOverlayType] = useState<OverlayVideoType>('side'); // TUG는 기본 측면
+  const [sequentialMode, setSequentialMode] = useState(false); // 순차재생 모드
+  const [seqPlaying, setSeqPlaying] = useState<'side' | 'front'>('side'); // 현재 순차재생 중인 영상
 
   const videoUrl = testApi.getVideoUrl(test);
 
@@ -32,15 +34,19 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
 
     if (!analysisData) return { side: null, front: null, default: null };
 
-    // TUG 검사: 측면/정면 둘 다 있을 수 있음
-    if ('side_overlay_video_filename' in analysisData || 'front_overlay_video_filename' in analysisData) {
+    // TUG 검사: 측면/정면 오버레이 (레거시 overlay_video_filename도 측면으로 처리)
+    if (isTUG) {
       const tugData = analysisData as TUGAnalysisData;
+      const sideUrl = tugData.side_overlay_video_filename
+        ? `/uploads/${tugData.side_overlay_video_filename}`
+        : (tugData.overlay_video_filename ? `/uploads/${tugData.overlay_video_filename}` : null);
+      const frontUrl = tugData.front_overlay_video_filename
+        ? `/uploads/${tugData.front_overlay_video_filename}`
+        : null;
       return {
-        side: tugData.side_overlay_video_filename ? `/uploads/${tugData.side_overlay_video_filename}` : null,
-        front: tugData.front_overlay_video_filename ? `/uploads/${tugData.front_overlay_video_filename}` : null,
-        default: tugData.front_overlay_video_filename
-          ? `/uploads/${tugData.front_overlay_video_filename}`
-          : (tugData.side_overlay_video_filename ? `/uploads/${tugData.side_overlay_video_filename}` : null)
+        side: sideUrl,
+        front: frontUrl,
+        default: sideUrl || frontUrl
       };
     }
 
@@ -54,10 +60,30 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
   };
 
   const overlayUrls = getOverlayVideoUrls();
-  const hasMultipleOverlays = overlayUrls.side && overlayUrls.front;
-  const currentOverlayUrl = hasMultipleOverlays
-    ? (overlayType === 'front' ? overlayUrls.front : overlayUrls.side)
+
+  // TUG 원본 영상 URL (측면/정면)
+  const tugOriginalUrls = (() => {
+    if (!isTUG) return null;
+    const tugData = test.analysis_data as TUGAnalysisData | null;
+    const frontFilename = tugData?.front_video_filename;
+    const frontUrl = frontFilename ? `/uploads/${frontFilename}` : null;
+    return { side: videoUrl, front: frontUrl };
+  })();
+
+  // 순차재생 모드에서 현재 영상 타입 결정
+  const activeViewType = sequentialMode ? seqPlaying : overlayType;
+
+  const currentOverlayUrl = isTUG
+    ? (activeViewType === 'front' ? (overlayUrls.front || overlayUrls.side) : (overlayUrls.side || overlayUrls.front))
     : overlayUrls.default;
+
+  // 순차재생 모드에서 원본 영상 URL 결정
+  const currentVideoUrl = isTUG && tugOriginalUrls
+    ? (activeViewType === 'front' ? (tugOriginalUrls.front || tugOriginalUrls.side) : tugOriginalUrls.side)
+    : videoUrl;
+
+  // 순차재생: 정면 영상 가능 여부
+  const hasFrontVideo = !!(tugOriginalUrls?.front || overlayUrls.front);
 
   useEffect(() => {
     const loadVideoInfo = async () => {
@@ -102,6 +128,23 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
     setShowPoseOverlay(!showPoseOverlay);
   };
 
+  // 순차재생: 측면 끝나면 정면 자동 전환
+  const handleSequentialEnded = () => {
+    if (sequentialMode && seqPlaying === 'side') {
+      setSeqPlaying('front');
+    }
+  };
+
+  // 순차재생 모드 토글
+  const toggleSequentialMode = () => {
+    if (!sequentialMode) {
+      setSequentialMode(true);
+      setSeqPlaying('side');
+    } else {
+      setSequentialMode(false);
+    }
+  };
+
   if (!videoUrl) {
     return null;
   }
@@ -120,72 +163,91 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
         onClick={(e) => e.stopPropagation()}
       >
         {/* 헤더 */}
-        <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
-          <div>
-            <h3 id="video-modal-title" className="font-semibold text-gray-800 dark:text-gray-100">검사 동영상</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {new Date(test.test_date).toLocaleDateString('ko-KR')} · {test.walk_time_seconds.toFixed(2)}초 · {test.walk_speed_mps.toFixed(2)}m/s
-            </p>
-          </div>
-          <div className="flex items-center space-x-2">
-            {/* 포즈 오버레이 토글 버튼 - 오버레이 영상이 있을 때만 표시 */}
-            {currentOverlayUrl && (
+        <div className="p-4 border-b dark:border-gray-700">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 id="video-modal-title" className="font-semibold text-gray-800 dark:text-gray-100">검사 동영상</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {new Date(test.test_date).toLocaleDateString('ko-KR')} · {test.walk_time_seconds.toFixed(2)}초 · {test.walk_speed_mps.toFixed(2)}m/s
+              </p>
+            </div>
+            <div className="flex items-center space-x-2">
+              {/* 포즈 오버레이 토글 버튼 - 오버레이 영상이 있을 때만 표시 */}
+              {currentOverlayUrl && (
+                <button
+                  onClick={togglePoseOverlay}
+                  className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    showPoseOverlay
+                      ? 'bg-green-500 text-white'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                  aria-label={showPoseOverlay ? '원본 영상 보기' : '포즈 오버레이 보기'}
+                  aria-pressed={showPoseOverlay}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                  <span>{showPoseOverlay ? '포즈' : '원본'}</span>
+                </button>
+              )}
               <button
-                onClick={togglePoseOverlay}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  showPoseOverlay
-                    ? 'bg-green-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-                aria-label={showPoseOverlay ? '원본 영상 보기' : '포즈 오버레이 보기'}
-                aria-pressed={showPoseOverlay}
+                onClick={onClose}
+                className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="닫기"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                <span>{showPoseOverlay ? '포즈' : '원본'}</span>
               </button>
-            )}
-            <button
-              onClick={onClose}
-              className="p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="닫기"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            </div>
           </div>
-        </div>
 
-        {/* TUG 검사: 측면/정면 선택 버튼 */}
-        {isTUG && hasMultipleOverlays && showPoseOverlay && (
-          <div className="flex items-center justify-center gap-2 p-3 bg-gray-100 dark:bg-gray-700 border-b dark:border-gray-600">
-            <span className="text-sm text-gray-600 dark:text-gray-300 mr-2">영상 선택:</span>
-            <button
-              onClick={() => setOverlayType('front')}
-              aria-pressed={overlayType === 'front'}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                overlayType === 'front'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-white dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-500'
-              }`}
-            >
-              정면 (어깨/골반 각도)
-            </button>
-            <button
-              onClick={() => setOverlayType('side')}
-              aria-pressed={overlayType === 'side'}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                overlayType === 'side'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-white dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-500'
-              }`}
-            >
-              측면 (기립/착석)
-            </button>
-          </div>
-        )}
+          {/* TUG 검사: 측면/정면 선택 + 순차재생 버튼 */}
+          {isTUG && hasFrontVideo && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t dark:border-gray-600">
+              <span className="text-sm text-gray-600 dark:text-gray-300 mr-1">
+                {sequentialMode ? `순차 재생: ${seqPlaying === 'side' ? '측면' : '정면'}` : '영상 선택:'}
+              </span>
+              {!sequentialMode && (
+                <>
+                  <button
+                    onClick={() => setOverlayType('side')}
+                    disabled={!overlayUrls.side && !tugOriginalUrls?.side}
+                    aria-pressed={overlayType === 'side'}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      overlayType === 'side'
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-500'
+                    }`}
+                  >
+                    측면
+                  </button>
+                  <button
+                    onClick={() => setOverlayType('front')}
+                    aria-pressed={overlayType === 'front'}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      overlayType === 'front'
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-500'
+                    }`}
+                  >
+                    정면
+                  </button>
+                </>
+              )}
+              <button
+                onClick={toggleSequentialMode}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  sequentialMode
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-500'
+                }`}
+              >
+                순차재생
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* 비디오 플레이어 */}
         <div className="bg-black relative">
@@ -193,16 +255,16 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
             <div className="relative">
               <video
                 ref={overlayVideoRef}
-                key={currentOverlayUrl} // URL 변경 시 비디오 리로드
+                key={currentOverlayUrl}
                 src={currentOverlayUrl}
                 controls
                 autoPlay
                 className="w-full max-h-[60vh]"
                 onError={() => {
-                  // 오버레이 영상 로딩 실패 시 원본으로 폴백
                   console.warn('포즈 오버레이 영상 로딩 실패, 원본 영상으로 전환');
                   setShowPoseOverlay(false);
                 }}
+                onEnded={sequentialMode ? handleSequentialEnded : undefined}
               >
                 브라우저가 동영상 재생을 지원하지 않습니다.
               </video>
@@ -212,21 +274,24 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
                   <circle cx="12" cy="12" r="4" />
                 </svg>
                 <span>
-                  {isTUG && hasMultipleOverlays
-                    ? (overlayType === 'front' ? '정면 포즈 오버레이' : '측면 포즈 오버레이')
+                  {isTUG
+                    ? (activeViewType === 'front' && overlayUrls.front ? '정면 포즈 오버레이' : '측면 포즈 오버레이')
                     : 'MediaPipe 포즈 오버레이'
                   }
+                  {sequentialMode && ' (순차재생)'}
                 </span>
               </div>
             </div>
           ) : (
             <video
               ref={videoRef}
-              src={videoUrl}
+              key={currentVideoUrl}
+              src={currentVideoUrl || undefined}
               controls
               autoPlay
               className="w-full max-h-[60vh]"
               onError={() => setError('동영상을 불러올 수 없습니다.')}
+              onEnded={sequentialMode ? handleSequentialEnded : undefined}
             >
               브라우저가 동영상 재생을 지원하지 않습니다.
             </video>
@@ -243,9 +308,9 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
               <div className="text-sm text-green-700 dark:text-green-300">
                 <p className="font-medium">MediaPipe 포즈 분석 영상</p>
                 <p className="text-green-600 dark:text-green-400 mt-1">
-                  {isTUG && hasMultipleOverlays && overlayType === 'front'
+                  {isTUG && overlayType === 'front' && overlayUrls.front
                     ? '정면 영상: 어깨와 골반의 기울기 분석에 적합합니다. 좌/우 균형을 확인하세요.'
-                    : isTUG && hasMultipleOverlays && overlayType === 'side'
+                    : isTUG && overlayType === 'side' && overlayUrls.side
                     ? '측면 영상: 기립/착석 동작과 보행 패턴 분석에 적합합니다.'
                     : '검사 분석 시 녹화된 관절 포인트와 스켈레톤 연결선이 표시됩니다.'
                   }

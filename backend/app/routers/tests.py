@@ -689,6 +689,9 @@ async def analyze_tug_dual_video_task(
             "current_frame": None
         })
 
+        # 정면 원본 영상 파일명 저장
+        result["front_video_filename"] = os.path.basename(front_video_path)
+
         # 결과를 DB에 저장
         test_data = {
             "patient_id": patient_id,
@@ -1637,12 +1640,44 @@ async def delete_test(
     user_id: str = Header(None, alias="X-User-Id"),
 ):
     """검사 삭제"""
-    # 동영상 파일도 삭제
+    # 동영상 파일 및 관련 파일 삭제
     test = db.get_test(test_id)
-    if test and test.get("video_url"):
-        video_path = os.path.join(UPLOAD_DIR, os.path.basename(test["video_url"]))
-        if os.path.exists(video_path):
-            os.remove(video_path)
+    if test:
+        # 메인 영상 삭제
+        if test.get("video_url"):
+            video_path = os.path.join(UPLOAD_DIR, os.path.basename(test["video_url"]))
+            if os.path.exists(video_path):
+                os.remove(video_path)
+
+        # TUG 관련 추가 파일 삭제
+        parsed = parse_analysis_data(test)
+        ad = parsed.get("analysis_data") or {}
+        tug_files = [
+            ad.get("front_video_filename"),
+            ad.get("side_overlay_video_filename"),
+            ad.get("front_overlay_video_filename"),
+            ad.get("overlay_video_filename"),
+        ]
+        # phase_clips 삭제
+        phase_clips = ad.get("phase_clips") or {}
+        for clip_info in phase_clips.values():
+            if isinstance(clip_info, dict) and clip_info.get("clip_filename"):
+                tug_files.append(clip_info["clip_filename"])
+            elif isinstance(clip_info, str):
+                tug_files.append(clip_info)
+        # walking clip 삭제
+        if test.get("video_url"):
+            base = os.path.splitext(os.path.basename(test["video_url"]))[0]
+            tug_files.append(f"{base}_walking_clip.mp4")
+
+        for fname in tug_files:
+            if fname:
+                fpath = os.path.join(UPLOAD_DIR, os.path.basename(fname))
+                if os.path.exists(fpath):
+                    try:
+                        os.remove(fpath)
+                    except OSError:
+                        pass
 
     if not db.delete_test(test_id):
         raise HTTPException(status_code=404, detail="검사 결과를 찾을 수 없습니다.")
@@ -2063,7 +2098,8 @@ async def get_walking_clip(test_id: str):
         raise HTTPException(status_code=404, detail="영상이 없습니다.")
 
     # analysis_data에서 보행 시작/끝 시간 추출
-    analysis = parse_analysis_data(test.get('analysis_data'))
+    parsed_test = parse_analysis_data(test)
+    analysis = parsed_test.get('analysis_data') or {}
     start_time = analysis.get('walk_start_time')
     end_time = analysis.get('walk_end_time')
 

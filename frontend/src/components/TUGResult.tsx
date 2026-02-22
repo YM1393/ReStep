@@ -2,7 +2,6 @@ import { useState } from 'react';
 import type { TUGAnalysisData, TUGAssessment, PhaseFrames, PhaseClips } from '../types';
 import { testApi } from '../services/api';
 import TUGWeightShift from './TUGWeightShift';
-import TUGDeviationCaptures from './TUGDeviationCaptures';
 
 interface TUGResultProps {
   data: TUGAnalysisData;
@@ -436,13 +435,6 @@ export default function TUGResult({ data, testId }: TUGResultProps) {
       {data.weight_shift && data.weight_shift.lateral_sway_amplitude > 0 && (
         <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
           <TUGWeightShift data={data.weight_shift} />
-        </div>
-      )}
-
-      {/* 자세 편향 캡처 */}
-      {data.deviation_captures && data.deviation_captures.length > 0 && (
-        <div className="mt-6">
-          <TUGDeviationCaptures captures={data.deviation_captures} />
         </div>
       )}
 

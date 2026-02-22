@@ -1,20 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { patientApi, testApi } from '../services/api';
 import type { Patient, WalkTest, ComparisonResult, AnalysisData, TUGAnalysisData, PatientStats, AsymmetryWarning, PatientTag, ClinicalNormativeResponse } from '../types';
-import VideoModal from '../components/VideoModal';
-import AngleChart from '../components/AngleChart';
 import TagManager from '../components/TagManager';
 import ClinicalNotesEditor from '../components/ClinicalNotesEditor';
-import ComparisonReport from '../components/ComparisonReport';
 import WalkingHighlight from '../components/WalkingHighlight';
-import TrendChart from '../components/TrendChart';
 import ConfidenceScoreComponent from '../components/ConfidenceScore';
-import AIReport from '../components/AIReport';
 import DashboardSummary from '../components/DashboardSummary';
-import ClinicalTrendChart from '../components/ClinicalTrendChart';
-import CorrelationAnalysis from '../components/CorrelationAnalysis';
-import WalkingRouteCard from '../components/WalkingRouteCard';
+
+// Lazy-loaded components (초기 렌더에 불필요)
+const VideoModal = lazy(() => import('../components/VideoModal'));
+const AngleChart = lazy(() => import('../components/AngleChart'));
+const ComparisonReport = lazy(() => import('../components/ComparisonReport'));
+const TrendChart = lazy(() => import('../components/TrendChart'));
+const AIReport = lazy(() => import('../components/AIReport'));
+const ClinicalTrendChart = lazy(() => import('../components/ClinicalTrendChart'));
+const CorrelationAnalysis = lazy(() => import('../components/CorrelationAnalysis'));
+const WalkingRouteCard = lazy(() => import('../components/WalkingRouteCard'));
 
 export default function PatientDetail() {
   const { id } = useParams();
@@ -29,6 +31,8 @@ export default function PatientDetail() {
   const [notes, setNotes] = useState('');
   const [, setNoteSaving] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
+  const [overlayViewType, setOverlayViewType] = useState<'side' | 'front'>('side');
+  const [dualView, setDualView] = useState(false);
   const [stats, setStats] = useState<PatientStats | null>(null);
   const [patientTags, setPatientTags] = useState<PatientTag[]>([]);
   const [clinicalNormative, setClinicalNormative] = useState<ClinicalNormativeResponse | null>(null);
@@ -37,6 +41,55 @@ export default function PatientDetail() {
   const [emailMessage, setEmailMessage] = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [emailResult, setEmailResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // 순차재생: 측면 영상 끝나면 자동으로 정면 영상 전환
+  const [seqPlaying, setSeqPlaying] = useState<'side' | 'front'>('side');
+
+  const handleSequentialEnded = useCallback(() => {
+    if (seqPlaying === 'side') {
+      setSeqPlaying('front');
+      setOverlayViewType('front');
+    }
+  }, [seqPlaying]);
+
+  // 순차재생 모드 진입 시 측면부터 시작
+  useEffect(() => {
+    if (dualView) {
+      setSeqPlaying('side');
+      setOverlayViewType('side');
+    }
+  }, [dualView]);
+
+  // 영상 실시간 각도 오버레이 (DOM 직접 업데이트로 리렌더링 방지)
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const angleDataRef = useRef<{ time: number; shoulder_tilt: number; hip_tilt: number }[] | undefined>(undefined);
+  const shoulderLabelRef = useRef<HTMLSpanElement>(null);
+  const hipLabelRef = useRef<HTMLSpanElement>(null);
+  const angleOverlayRef = useRef<HTMLDivElement>(null);
+
+  const handleVideoTimeUpdate = useCallback(() => {
+    try {
+      const video = videoRef.current;
+      const data = angleDataRef.current;
+      if (!video || !data?.length || !angleOverlayRef.current) return;
+      const t = video.currentTime;
+      let lo = 0, hi = data.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (data[mid].time < t) lo = mid + 1;
+        else hi = mid;
+      }
+      const idx = lo > 0 && Math.abs(data[lo - 1].time - t) < Math.abs(data[lo].time - t) ? lo - 1 : lo;
+      const point = data[idx];
+      if (point && point.shoulder_tilt != null && point.hip_tilt != null) {
+        if (shoulderLabelRef.current) shoulderLabelRef.current.textContent = `${point.shoulder_tilt.toFixed(1)}°`;
+        if (hipLabelRef.current) hipLabelRef.current.textContent = `${point.hip_tilt.toFixed(1)}°`;
+        angleOverlayRef.current.style.display = '';
+      }
+    } catch {
+      if (angleOverlayRef.current) angleOverlayRef.current.style.display = 'none';
+    }
+  }, []);
 
   useEffect(() => {
     if (id) loadData(id);
@@ -54,21 +107,19 @@ export default function PatientDetail() {
       if (testsData.length > 0) {
         setNotes(testsData[0].notes || '');
       }
-      try {
-        const tags = await patientApi.getPatientTags(patientId);
-        setPatientTags(tags);
-      } catch { /* tags optional */ }
-      if (testsData.length >= 1) {
-        try {
-          const comparisonData = await testApi.compare(patientId);
-          setComparison(comparisonData);
-        } catch (err) { /* comparison is optional */ }
-        try {
-          const statsData = await testApi.getStats(patientId, testsData[0].test_type || '10MWT');
-          setStats(statsData);
-        } catch (err) { /* stats is optional */ }
-        testApi.getClinicalNormative(patientId).then(setClinicalNormative).catch(() => {});
-      }
+      // 부가 API 병렬 호출
+      const testType = testsData[0]?.test_type || '10MWT';
+      const hasTests = testsData.length >= 1;
+      const results = await Promise.allSettled([
+        patientApi.getPatientTags(patientId),
+        hasTests ? testApi.compare(patientId) : Promise.reject('no tests'),
+        hasTests ? testApi.getStats(patientId, testType) : Promise.reject('no tests'),
+        hasTests ? testApi.getClinicalNormative(patientId) : Promise.reject('no tests'),
+      ]);
+      if (results[0].status === 'fulfilled') setPatientTags(results[0].value);
+      if (results[1].status === 'fulfilled') setComparison(results[1].value);
+      if (results[2].status === 'fulfilled') setStats(results[2].value);
+      if (results[3].status === 'fulfilled') setClinicalNormative(results[3].value);
       setError(null);
     } catch (err) {
       setError('환자 정보를 불러오는데 실패했습니다.');
@@ -136,6 +187,19 @@ export default function PatientDetail() {
     return null;
   };
 
+  // TUG: 측면/정면 오버레이 URL 각각 가져오기
+  const getTUGOverlayUrls = (test: WalkTest) => {
+    const data = test.analysis_data as TUGAnalysisData | null;
+    if (!data) return { side: null, front: null };
+    const sideUrl = data.side_overlay_video_filename
+      ? `/uploads/${data.side_overlay_video_filename}`
+      : (data.overlay_video_filename ? `/uploads/${data.overlay_video_filename}` : null);
+    const frontUrl = data.front_overlay_video_filename
+      ? `/uploads/${data.front_overlay_video_filename}`
+      : null;
+    return { side: sideUrl, front: frontUrl };
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center py-12" role="status">
@@ -161,16 +225,36 @@ export default function PatientDetail() {
   const analysisData = latestTest?.analysis_data as AnalysisData | undefined;
   const gaitPattern = analysisData?.gait_pattern;
   const clinicalVars = analysisData?.clinical_variables;
-  const hasClinicaVars = clinicalVars && Object.keys(clinicalVars).length > 0;
+  const hasClinicalVars = clinicalVars && Object.keys(clinicalVars).length > 0;
   const testType = latestTest?.test_type || '10MWT';
   const testBadgeLabel = testType === '10MWT' ? '10MWT' : testType === 'TUG' ? 'TUG' : 'BBS';
 
   const risk = latestTest && latestTest.walk_speed_mps != null && latestTest.walk_time_seconds != null
     ? calculateRiskScore(latestTest.walk_speed_mps, latestTest.walk_time_seconds) : null;
-  const overlayUrl = latestTest ? getOverlayUrl(latestTest) : null;
-  const videoUrl = latestTest ? testApi.getVideoUrl(latestTest) : null;
+  const isTUGTest = testType === 'TUG';
+  const tugOverlayUrls = isTUGTest && latestTest ? getTUGOverlayUrls(latestTest) : null;
+  const overlayUrl = isTUGTest
+    ? (overlayViewType === 'front' ? (tugOverlayUrls?.front || tugOverlayUrls?.side) : (tugOverlayUrls?.side || tugOverlayUrls?.front)) || null
+    : (latestTest ? getOverlayUrl(latestTest) : null);
+  const baseVideoUrl = latestTest ? testApi.getVideoUrl(latestTest) : null;
+  // TUG: 측면/정면 원본 영상 URL
+  const tugVideoUrls = (() => {
+    if (!isTUGTest || !baseVideoUrl) return null;
+    const tugData = latestTest?.analysis_data as TUGAnalysisData | null;
+    const frontFilename = tugData?.front_video_filename;
+    const frontUrl = frontFilename
+      ? `/uploads/${frontFilename}`
+      : (baseVideoUrl.includes('_side') ? baseVideoUrl.replace(/_side(\.[^.]+)$/, '_front$1') : null);
+    return { side: baseVideoUrl, front: frontUrl };
+  })();
+  const videoUrl = isTUGTest && tugVideoUrls
+    ? (overlayViewType === 'front' ? (tugVideoUrls.front || tugVideoUrls.side) : tugVideoUrls.side)
+    : baseVideoUrl;
   const confidenceScore = analysisData?.confidence_score;
   const asymmetryWarnings = analysisData?.asymmetry_warnings;
+
+  // angleDataRef를 현재 analysisData로 업데이트
+  angleDataRef.current = analysisData?.angle_data;
 
   return (
     <div className="animate-fadeIn max-w-7xl mx-auto pb-20 sm:pb-0 overflow-x-hidden">
@@ -310,6 +394,7 @@ export default function PatientDetail() {
                   </p>
                   <p className="text-sm text-gray-500 dark:text-gray-400">초</p>
                 </div>
+                {testType !== 'TUG' && (
                 <div className="bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/50 dark:to-gray-800 p-5 rounded-xl border-2 border-gray-200 dark:border-gray-600 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-all">
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">보행 속도</p>
                   <p className="text-3xl font-extrabold text-blue-600 dark:text-blue-400">
@@ -317,6 +402,7 @@ export default function PatientDetail() {
                   </p>
                   <p className="text-sm text-gray-500 dark:text-gray-400">m/s</p>
                 </div>
+                )}
                 <div className="bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/50 dark:to-gray-800 p-5 rounded-xl border-2 border-gray-200 dark:border-gray-600 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-all">
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">분석 프레임</p>
                   <p className="text-3xl font-extrabold text-blue-600 dark:text-blue-400">
@@ -435,7 +521,7 @@ export default function PatientDetail() {
               )}
 
               {/* Clinical Variables Section (10MWT) */}
-              {hasClinicaVars && (
+              {hasClinicalVars && (
                 <div className="mb-6">
                   <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
                     보행 임상 변수
@@ -446,8 +532,8 @@ export default function PatientDetail() {
                     )}
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {/* Cadence */}
-                    {clinicalVars.cadence && (() => {
+                    {/* Cadence - TUG에서는 숨김 */}
+                    {clinicalVars.cadence && testType !== 'TUG' && (() => {
                       const norm = clinicalNormative?.cadence;
                       const isNormal = norm ? norm.comparison === 'normal' : (clinicalVars.cadence!.value >= 100 && clinicalVars.cadence!.value <= 130);
                       const rangeText = norm?.normative ? `${norm.normative.range_low}-${norm.normative.range_high}` : '100-130';
@@ -465,6 +551,18 @@ export default function PatientDetail() {
                         </div>
                       );
                     })()}
+
+                    {/* 총 걸음수 */}
+                    {clinicalVars.cadence && testType !== 'TUG' && clinicalVars.cadence.total_steps > 0 && (
+                      <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-xl border-l-4 border-violet-500">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">총 걸음수</p>
+                        <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
+                          {clinicalVars.cadence.total_steps}
+                          <span className="text-sm font-normal text-gray-500 ml-1">걸음</span>
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">10m 보행 기준</p>
+                      </div>
+                    )}
 
                     {/* Stride Length - 측면 촬영(TUG)에서만 표시 */}
                     {testType !== '10MWT' && clinicalVars.stride_length && (() => {
@@ -552,27 +650,95 @@ export default function PatientDetail() {
               {(videoUrl || overlayUrl) && (
                 <div className="mb-6">
                   <div className="bg-gray-900 rounded-xl overflow-hidden">
-                    {showOverlay && overlayUrl ? (
-                      <video
-                        key="overlay"
-                        src={overlayUrl}
-                        controls
-                        className="w-full aspect-video"
-                        onError={() => setShowOverlay(false)}
-                      />
-                    ) : videoUrl ? (
-                      <video
-                        key="original"
-                        src={videoUrl}
-                        controls
-                        className="w-full aspect-video"
-                      />
-                    ) : null}
+                    <div className="relative">
+                      {showOverlay && overlayUrl ? (
+                        <video
+                          ref={videoRef}
+                          key={`overlay-${overlayViewType}`}
+                          src={overlayUrl}
+                          controls
+                          autoPlay={dualView && seqPlaying === 'front'}
+                          className="w-full aspect-video"
+                          onError={() => setShowOverlay(false)}
+                          onEnded={dualView ? handleSequentialEnded : undefined}
+                          onTimeUpdate={analysisData?.angle_data ? handleVideoTimeUpdate : undefined}
+                        />
+                      ) : videoUrl ? (
+                        <video
+                          ref={videoRef}
+                          key={`original-${overlayViewType}`}
+                          src={videoUrl}
+                          controls
+                          autoPlay={dualView && seqPlaying === 'front'}
+                          className="w-full aspect-video"
+                          onEnded={dualView ? handleSequentialEnded : undefined}
+                          onTimeUpdate={analysisData?.angle_data ? handleVideoTimeUpdate : undefined}
+                        />
+                      ) : null}
+                      {/* 실시간 각도 오버레이 - 정면 영상에서만 표시 */}
+                      {analysisData?.angle_data && overlayViewType === 'front' && (
+                        <div ref={angleOverlayRef} className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-white px-3 py-2 rounded-lg text-sm space-y-1 pointer-events-none" style={{ display: 'none' }}>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+                            <span>어깨</span>
+                            <span ref={shoulderLabelRef} className="font-mono font-bold ml-auto">0.0°</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-orange-400 inline-block"></span>
+                            <span>골반</span>
+                            <span ref={hipLabelRef} className="font-mono font-bold ml-auto">0.0°</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <div className="bg-gray-800 px-4 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                       <span className="text-white text-sm">
-                        {showOverlay && overlayUrl ? '포즈 오버레이 영상' : '원본 영상'} · {(latestTest.walk_time_seconds ?? 0).toFixed(1)}초
+                        {dualView && isTUGTest
+                          ? `순차 재생: ${seqPlaying === 'side' ? '측면' : '정면'}${showOverlay ? ' (포즈 오버레이)' : ''}`
+                          : showOverlay && overlayUrl
+                          ? (isTUGTest ? (overlayViewType === 'front' && tugOverlayUrls?.front ? '정면 포즈 오버레이 영상' : '측면 포즈 오버레이 영상') : '포즈 오버레이 영상')
+                          : (isTUGTest && tugVideoUrls ? (overlayViewType === 'front' ? '정면 원본 영상' : '측면 원본 영상') : '원본 영상')
+                        } · {(latestTest.walk_time_seconds ?? 0).toFixed(1)}초
                       </span>
                       <div className="flex gap-2">
+                        {/* TUG 측면/정면 선택 - 동시재생이 아닐 때만 */}
+                        {isTUGTest && tugVideoUrls && !dualView && (
+                          <>
+                            <button
+                              onClick={() => setOverlayViewType('side')}
+                              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                                overlayViewType === 'side'
+                                  ? 'bg-blue-500 text-white'
+                                  : 'bg-white/10 text-white hover:bg-white/20'
+                              }`}
+                            >
+                              측면
+                            </button>
+                            <button
+                              onClick={() => setOverlayViewType('front')}
+                              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                                overlayViewType === 'front'
+                                  ? 'bg-blue-500 text-white'
+                                  : 'bg-white/10 text-white hover:bg-white/20'
+                              }`}
+                            >
+                              정면
+                            </button>
+                          </>
+                        )}
+                        {/* 동시재생 버튼 - 정면 영상이 있을 때만 */}
+                        {isTUGTest && tugVideoUrls?.front && (
+                          <button
+                            onClick={() => setDualView(!dualView)}
+                            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                              dualView
+                                ? 'bg-green-500 text-white'
+                                : 'bg-white/10 text-white hover:bg-white/20'
+                            }`}
+                          >
+                            순차재생
+                          </button>
+                        )}
                         {overlayUrl && (
                           <button
                             onClick={() => setShowOverlay(!showOverlay)}
@@ -599,7 +765,7 @@ export default function PatientDetail() {
               {analysisData?.angle_data && (
                 <div>
                   <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4">보행 기울기 추이</h3>
-                  <AngleChart data={analysisData.angle_data} />
+                  <Suspense fallback={null}><AngleChart data={analysisData.angle_data} /></Suspense>
                 </div>
               )}
 
@@ -663,7 +829,8 @@ export default function PatientDetail() {
                   </div>
                 </div>
 
-                {/* Speed */}
+                {/* Speed - TUG 제외 */}
+                {testType !== 'TUG' && (
                 <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg mb-3">
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">보행 속도</p>
                   <div className="text-right">
@@ -684,6 +851,7 @@ export default function PatientDetail() {
                     </p>
                   </div>
                 </div>
+                )}
 
                 {/* Risk Score Comparison */}
                 {risk && previousTest && (
@@ -750,6 +918,7 @@ export default function PatientDetail() {
                       SD: {stats.walk_time.std}초 | 범위: {stats.walk_time.min}-{stats.walk_time.max}초
                     </p>
                   </div>
+                  {testType !== 'TUG' && (
                   <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                     <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">보행 속도</p>
                     <p className="text-xl font-bold text-gray-900 dark:text-gray-100">
@@ -759,43 +928,45 @@ export default function PatientDetail() {
                       SD: {stats.walk_speed.std} | 범위: {stats.walk_speed.min}-{stats.walk_speed.max} m/s
                     </p>
                   </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Walking Route Card */}
-            {id && latestTest && (
-              <WalkingRouteCard
-                patientId={id}
-                speedMps={latestTest?.walk_speed_mps ?? 0}
-                walkTimeSeconds={latestTest?.walk_time_seconds ?? 0}
-              />
-            )}
+            <Suspense fallback={null}>
+              {/* Walking Route Card - 10MWT only */}
+              {id && latestTest && testType === '10MWT' && (
+                <WalkingRouteCard
+                  patientId={id}
+                  speedMps={latestTest?.walk_speed_mps ?? 0}
+                />
+              )}
 
-            {/* Trend Analysis Chart */}
-            {id && tests.length >= 3 && (
-              <TrendChart patientId={id} testType={testType as any} />
-            )}
+              {/* Trend Analysis Chart */}
+              {id && tests.length >= 3 && (
+                <TrendChart patientId={id} testType={testType as any} />
+              )}
 
-            {/* Clinical Variable Trend Chart */}
-            {id && tests.length >= 2 && hasClinicaVars && (
-              <ClinicalTrendChart patientId={id} testType={testType as any} clinicalNormative={clinicalNormative} />
-            )}
+              {/* Clinical Variable Trend Chart */}
+              {id && tests.length >= 2 && hasClinicalVars && (
+                <ClinicalTrendChart patientId={id} testType={testType as any} clinicalNormative={clinicalNormative} />
+              )}
 
-            {/* Correlation Analysis */}
-            {id && tests.length >= 3 && hasClinicaVars && (
-              <CorrelationAnalysis patientId={id} testType={testType as any} />
-            )}
+              {/* Correlation Analysis */}
+              {id && tests.length >= 3 && hasClinicalVars && (
+                <CorrelationAnalysis patientId={id} testType={testType as any} />
+              )}
 
-            {/* Comparison Report */}
-            {id && tests.length >= 2 && (
-              <ComparisonReport patientId={id} testId={latestTest?.id} currentTest={tests[0]} previousTest={tests[1]} />
-            )}
+              {/* Comparison Report */}
+              {id && tests.length >= 2 && (
+                <ComparisonReport patientId={id} testId={latestTest?.id} currentTest={tests[0]} previousTest={tests[1]} />
+              )}
 
-            {/* AI Report */}
-            {latestTest && (
-              <AIReport testId={latestTest.id} />
-            )}
+              {/* AI Report */}
+              {latestTest && (
+                <AIReport testId={latestTest.id} />
+              )}
+            </Suspense>
 
             {/* 3D Pose Visualization - disabled for 10MWT (rear-view only, low accuracy) */}
 
@@ -863,10 +1034,12 @@ export default function PatientDetail() {
 
       {/* Video Modal */}
       {selectedVideoTest && (
-        <VideoModal
-          test={selectedVideoTest}
-          onClose={() => setSelectedVideoTest(null)}
-        />
+        <Suspense fallback={null}>
+          <VideoModal
+            test={selectedVideoTest}
+            onClose={() => setSelectedVideoTest(null)}
+          />
+        </Suspense>
       )}
 
 

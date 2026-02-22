@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple, Optional, Set, FrozenSet
 
 import mediapipe as mp
 from scipy.signal import find_peaks
+from analysis.stopwatch_overlay import add_mwt_stopwatch
 
 
 # 얼굴 랜드마크 제외한 몸체 연결선 정의 (상반신 + 하반신만)
@@ -549,6 +550,66 @@ class GaitAnalyzer:
         start_frame_data = frame_data[idx_2m]
         end_frame_data = frame_data[walk_end_idx]
 
+        # 오버레이 영상에 START/FINISH 측정 라인 추가 (후처리)
+        # 실제 2m, 12m 물리적 위치를 1/h 곡선으로 추정
+        # 10MWT 코스: 0m(출발) → 2m(START) → 12m(FINISH) → 14m(끝)
+        # 1/h는 거리에 비례하므로 2/14, 12/14 비율로 보간
+        TOTAL_COURSE_M = 14.0
+        line_y_2m = None
+        line_y_12m = None
+        if overlay_video_path and os.path.exists(overlay_video_path) and total_inv_h_change > 0:
+            SMOOTH_HALF = 3
+
+            # 실제 2m/12m 위치의 inv_h 값 계산
+            inv_h_at_visual_2m = inv_h_start + (2.0 / TOTAL_COURSE_M) * total_inv_h_change
+            inv_h_at_visual_12m = inv_h_start + (12.0 / TOTAL_COURSE_M) * total_inv_h_change
+
+            # 해당 inv_h 값에 가장 가까운 프레임 인덱스 찾기
+            visual_idx_2m = walk_start_idx
+            visual_idx_12m = walk_end_idx
+            for i in range(walk_start_idx, walk_end_idx):
+                if inv_h[i] >= inv_h_at_visual_2m:
+                    visual_idx_2m = i
+                    break
+            for i in range(walk_start_idx, walk_end_idx):
+                if inv_h[i] >= inv_h_at_visual_12m:
+                    visual_idx_12m = i
+                    break
+
+            print(f"[GAIT] Visual line positions: 2m→idx {visual_idx_2m} (t={times[visual_idx_2m]:.2f}s), "
+                  f"12m→idx {visual_idx_12m} (t={times[visual_idx_12m]:.2f}s)")
+
+            start_y_samples = [
+                frame_data[i]['ankle_y']
+                for i in range(max(0, visual_idx_2m - SMOOTH_HALF), min(len(frame_data), visual_idx_2m + SMOOTH_HALF + 1))
+                if frame_data[i].get('ankle_y') is not None
+            ]
+            end_y_samples = [
+                frame_data[i]['ankle_y']
+                for i in range(max(0, visual_idx_12m - SMOOTH_HALF), min(len(frame_data), visual_idx_12m + SMOOTH_HALF + 1))
+                if frame_data[i].get('ankle_y') is not None
+            ]
+            if start_y_samples and end_y_samples:
+                line_y_2m = int(np.median(start_y_samples))
+                line_y_12m = int(np.median(end_y_samples))
+                self._add_measurement_lines_to_overlay(
+                    overlay_video_path,
+                    line_y_2m, line_y_12m,
+                    frame_data[visual_idx_2m]['frame'], frame_data[visual_idx_12m]['frame'],
+                    fps, frame_width, frame_height
+                )
+
+            # 스톱워치 UI 추가 (시각적 라인 위치와 동일한 프레임 기준)
+            sw_start_frame = frame_data[visual_idx_2m]['frame']
+            sw_end_frame = frame_data[visual_idx_12m]['frame']
+            measure_time = walk_time_seconds  # 보정된 10m 보행 시간
+            print(f"[GAIT] Adding stopwatch overlay... start_frame={sw_start_frame}, end_frame={sw_end_frame}, measure_time={measure_time:.2f}s")
+            add_mwt_stopwatch(overlay_video_path, sw_start_frame, sw_end_frame,
+                              measure_time, fps, frame_width, frame_height)
+
+            if progress_callback:
+                progress_callback(85)
+
         # 측정 구간 내 보행 패턴 분석
         measurement_frames = frame_data[walk_start_idx:walk_end_idx + 1]
         gait_pattern = self._analyze_gait_pattern(measurement_frames)
@@ -623,6 +684,12 @@ class GaitAnalyzer:
             ),
             "asymmetry_warnings": [],
             "pose_3d_frames": pose_3d_frames if pose_3d_frames else None,
+            "measurement_lines": {
+                "start_y": line_y_2m,
+                "finish_y": line_y_12m,
+                "start_frame": start_frame_data["frame"],
+                "finish_frame": end_frame_data["frame"],
+            } if line_y_2m is not None and line_y_12m is not None else None,
         }
 
         # stride_length 계산 (walk_speed × stride_time)
@@ -636,6 +703,99 @@ class GaitAnalyzer:
         result["asymmetry_warnings"] = self._calculate_asymmetry_warnings(cv)
 
         return result
+
+    def _add_measurement_lines_to_overlay(
+        self,
+        overlay_video_path: str,
+        line_y_start: int,
+        line_y_finish: int,
+        frame_num_start: int,
+        frame_num_finish: int,
+        fps: float,
+        frame_width: int,
+        frame_height: int
+    ) -> None:
+        """오버레이 영상에 START(2m)/FINISH(12m) 측정 라인 추가 (후처리)"""
+        import tempfile
+
+        cap = cv2.VideoCapture(overlay_video_path)
+        if not cap.isOpened():
+            print(f"[GAIT] Failed to open overlay for line drawing: {overlay_video_path}")
+            return
+
+        # 임시 파일에 쓰기
+        tmp_path = overlay_video_path + ".tmp.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
+        writer = cv2.VideoWriter(tmp_path, fourcc, fps, (frame_width, frame_height))
+        if not writer.isOpened():
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(tmp_path, fourcc, fps, (frame_width, frame_height))
+
+        # 색상 (BGR)
+        START_COLOR = (0, 220, 0)       # 초록 (2m START)
+        FINISH_COLOR = (0, 80, 255)     # 빨강 (12m FINISH)
+        HIGHLIGHT_COLOR_S = (0, 255, 100)
+        HIGHLIGHT_COLOR_F = (0, 0, 255)
+        BG_COLOR = (0, 0, 0)            # 라벨 배경
+
+        FONT = cv2.FONT_HERSHEY_SIMPLEX
+        FONT_SCALE = 0.7
+        FONT_THICK = 2
+        LINE_THICK = 2
+        HIGHLIGHT_THICK = 4
+        HIGHLIGHT_FRAMES = int(fps * 0.5)  # 교차 시점 ±0.5초 하이라이트
+
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # --- START 라인 (2m) ---
+            is_start_highlight = abs(frame_idx - frame_num_start) <= HIGHLIGHT_FRAMES
+            s_thick = HIGHLIGHT_THICK if is_start_highlight else LINE_THICK
+            s_color = HIGHLIGHT_COLOR_S if is_start_highlight else START_COLOR
+
+            # 반투명 라인: 오버레이 블렌딩
+            overlay = frame.copy()
+            cv2.line(overlay, (0, line_y_start), (frame_width, line_y_start), s_color, s_thick)
+            cv2.line(overlay, (0, line_y_finish), (frame_width, line_y_finish),
+                     HIGHLIGHT_COLOR_F if abs(frame_idx - frame_num_finish) <= HIGHLIGHT_FRAMES else FINISH_COLOR,
+                     HIGHLIGHT_THICK if abs(frame_idx - frame_num_finish) <= HIGHLIGHT_FRAMES else LINE_THICK)
+            cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+
+            # --- 라벨: START 2m ---
+            label_s = "START 2m"
+            (tw, th), _ = cv2.getTextSize(label_s, FONT, FONT_SCALE, FONT_THICK)
+            lbl_y_s = line_y_start - 10
+            if lbl_y_s - th < 5:
+                lbl_y_s = line_y_start + th + 15  # 위에 공간 없으면 아래로
+            cv2.rectangle(frame, (8, lbl_y_s - th - 4), (8 + tw + 10, lbl_y_s + 4), BG_COLOR, -1)
+            cv2.putText(frame, label_s, (13, lbl_y_s), FONT, FONT_SCALE, START_COLOR, FONT_THICK)
+
+            # --- 라벨: FINISH 12m ---
+            label_f = "FINISH 12m"
+            (tw, th), _ = cv2.getTextSize(label_f, FONT, FONT_SCALE, FONT_THICK)
+            lbl_y_f = line_y_finish - 10
+            if lbl_y_f - th < 5:
+                lbl_y_f = line_y_finish + th + 15
+            cv2.rectangle(frame, (8, lbl_y_f - th - 4), (8 + tw + 10, lbl_y_f + 4), BG_COLOR, -1)
+            cv2.putText(frame, label_f, (13, lbl_y_f), FONT, FONT_SCALE, FINISH_COLOR, FONT_THICK)
+
+            writer.write(frame)
+            frame_idx += 1
+
+        cap.release()
+        writer.release()
+
+        # 원본 교체
+        try:
+            os.replace(tmp_path, overlay_video_path)
+            print(f"[GAIT] Measurement lines added: START y={line_y_start}, FINISH y={line_y_finish}")
+        except Exception as e:
+            print(f"[GAIT] Failed to replace overlay with lines: {e}")
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     def _calculate_confidence_score(
         self,
@@ -884,8 +1044,9 @@ class GaitAnalyzer:
 
     def _calculate_shoulder_tilt(self, left_point: np.ndarray, right_point: np.ndarray) -> float:
         """
-        어깨/골반 기울기 계산 (도 단위)
+        어깨/골반 기울기 계산 (수평으로부터의 편차, 도 단위)
 
+        abs(dx)를 사용하여 카메라 방향에 무관하게 수평 편차만 측정.
         Returns:
             양수: 오른쪽이 높음 (왼쪽으로 기울어짐)
             음수: 왼쪽이 높음 (오른쪽으로 기울어짐)
@@ -896,9 +1057,8 @@ class GaitAnalyzer:
         if abs(dx) < 1:  # 거의 수직선인 경우
             return 0.0
 
-        # atan2를 사용하여 각도 계산 (라디안 → 도)
-        # Y축이 아래로 양수이므로, dy가 양수면 오른쪽이 낮음 → 음수 반환
-        angle_rad = math.atan2(-dy, dx)  # -dy로 반전
+        # abs(dx)로 카메라 방향(dx 부호) 무관하게 수평 편차만 계산
+        angle_rad = math.atan2(-dy, abs(dx))
         angle_deg = math.degrees(angle_rad)
 
         return round(angle_deg, 1)

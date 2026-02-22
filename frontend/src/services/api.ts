@@ -166,6 +166,11 @@ export const patientApi = {
     return response.data;
   },
 
+  getAllWithLatestTest: async (limit = 50): Promise<any[]> => {
+    const response = await api.get(`/api/patients/with-latest-test?limit=${limit}`);
+    return response.data;
+  },
+
   search: async (query: string): Promise<Patient[]> => {
     const response = await api.get(`/api/patients/search?q=${encodeURIComponent(query)}`);
     return response.data;

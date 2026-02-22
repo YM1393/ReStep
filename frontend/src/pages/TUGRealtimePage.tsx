@@ -384,14 +384,10 @@ export default function TUGRealtimePage() {
           {testPhase === 'completed' && wsState.testResult && (
             <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
               <h3 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">검사 결과</h3>
-              <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="grid grid-cols-2 gap-4 text-center">
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">총 소요시간</p>
                   <p className="text-2xl font-bold text-gray-900 dark:text-white">{wsState.testResult.total_time_seconds?.toFixed(1)}s</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">보행 속도</p>
-                  <p className="text-2xl font-bold text-gray-900 dark:text-white">{wsState.testResult.walk_speed_mps?.toFixed(2)} m/s</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">평가</p>

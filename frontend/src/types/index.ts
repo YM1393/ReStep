@@ -187,6 +187,12 @@ export interface AnalysisData {
   confidence_score?: ConfidenceScore;
   asymmetry_warnings?: AsymmetryWarning[];
   pose_3d_frames?: Pose3DFrame[];  // 3D 월드 랜드마크 데이터
+  measurement_lines?: {
+    start_y: number;
+    finish_y: number;
+    start_frame: number;
+    finish_frame: number;
+  };
 }
 
 // TUG 검사 관련 타입
@@ -319,6 +325,7 @@ export interface TUGAnalysisData {
   overlay_video_filename?: string;  // 기존 호환성 (측면)
   side_overlay_video_filename?: string;  // 측면 영상 오버레이
   front_overlay_video_filename?: string; // 정면 영상 오버레이
+  front_video_filename?: string; // 정면 원본 영상 파일명
 
   // 기립/착석 분석 (측면 영상)
   stand_up?: StandSitMetrics;

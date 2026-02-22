@@ -6,6 +6,7 @@ import base64
 from typing import Dict, List, Tuple, Optional, Set
 
 import mediapipe as mp
+from analysis.stopwatch_overlay import add_tug_stopwatch
 
 
 # 얼굴 랜드마크 제외한 몸체 연결선 정의 (상반신 + 하반신만)
@@ -452,6 +453,11 @@ class TUGAnalyzer:
 
         # TUG 단계 감지
         phases = self._detect_tug_phases(frame_data, fps)
+
+        # 오버레이 영상에 스톱워치 UI 추가 (후처리)
+        if overlay_video_path and os.path.exists(overlay_video_path):
+            print(f"[TUG SIDE] Adding stopwatch overlay...")
+            add_tug_stopwatch(overlay_video_path, phases, fps, frame_width, frame_height)
 
         # 기립/착석 분석
         stand_up_metrics = self._calculate_stand_up_metrics(frame_data, phases, fps)
@@ -1378,7 +1384,7 @@ class TUGAnalyzer:
             "test_type": "TUG",
             "total_time_seconds": round(total_time, 2),
             "walk_time_seconds": round(total_time, 2),
-            "walk_speed_mps": round(6.0 / total_time, 2) if total_time > 0 else 0,
+            "walk_speed_mps": 0,
             "assessment": side_result['assessment'],
 
             # 포즈 오버레이 영상 경로 (측면/정면)
@@ -1663,7 +1669,7 @@ class TUGAnalyzer:
             "test_type": "TUG",
             "total_time_seconds": round(total_time_seconds, 2),
             "walk_time_seconds": round(total_time_seconds, 2),  # 호환성용
-            "walk_speed_mps": round(6.0 / total_time_seconds, 2) if total_time_seconds > 0 else 0,  # 총 6m
+            "walk_speed_mps": 0,
             "assessment": assessment,
             "phases": {
                 "stand_up": {
@@ -1782,17 +1788,22 @@ class TUGAnalyzer:
         return math.degrees(angle)
 
     def _calculate_tilt(self, left_point: np.ndarray, right_point: np.ndarray) -> float:
-        """어깨/골반 기울기 계산 (수평 기준, ±45° 제한)"""
+        """어깨/골반 기울기 계산 (수평으로부터의 편차)
+
+        abs(dx)를 사용하여 카메라 방향(dx 부호)에 무관하게 수평 편차만 계산.
+        양수: 오른쪽이 높음, 음수: 왼쪽이 높음
+        """
         dx = right_point[0] - left_point[0]
         dy = right_point[1] - left_point[1]
 
         if abs(dx) < 1:
             return 0.0
 
-        angle_rad = math.atan2(-dy, dx)
+        # abs(dx)로 카메라 방향 무관하게 수평 편차만 측정
+        angle_rad = math.atan2(-dy, abs(dx))
         angle_deg = math.degrees(angle_rad)
 
-        # ±25° 범위로 제한 (정상 어깨/골반 기울기 범위, 이 이상은 회전에 의한 왜곡)
+        # ±25° 범위로 제한 (이 이상은 회전에 의한 왜곡)
         angle_deg = max(-25.0, min(25.0, angle_deg))
         return round(angle_deg, 1)
 
@@ -1825,21 +1836,29 @@ class TUGAnalyzer:
             for btype in ['stand_start', 'stand_end', 'sit_start', 'sit_end', 'turn']:
                 fusion_scores[btype] = self._compute_fusion_score(derivatives, btype)
 
-        # 1. 일어서기 시작점 감지 (앉은 자세에서 각도가 증가하기 시작)
+        # 엉덩이 높이 (모든 단계에서 공통 사용)
+        hip_heights = [f['hip_height_normalized'] for f in frame_data]
+        smoothed_hip_heights = self._moving_average(hip_heights, window)
+
+        # 1. 일어서기 시작점 감지 (앉은 자세에서 엉덩이가 올라가기 시작)
         stand_up_start_idx = self._find_stand_up_start(smoothed_angles, smoothed_heights,
-                                                        fusion_scores.get('stand_start'))
+                                                        fusion_scores.get('stand_start'),
+                                                        smoothed_hip_heights)
 
-        # 2. 일어서기 완료점 감지 (선 자세에 도달 + 상체가 수직)
+        # 2. 일어서기 완료점 감지 (선 자세에 도달 + 상체가 수직 + 엉덩이 높이 상승)
         stand_up_end_idx = self._find_stand_up_end(smoothed_angles, smoothed_torso, stand_up_start_idx,
-                                                    fusion_scores.get('stand_end'))
+                                                    fusion_scores.get('stand_end'),
+                                                    smoothed_hip_heights)
 
-        # 3. 앉기 시작점 감지 (마지막으로 선 자세에서 앉기 시작)
+        # 3. 앉기 시작점 감지 (엉덩이가 내려가기 시작)
         sit_down_start_idx = self._find_sit_down_start(smoothed_angles, stand_up_end_idx,
-                                                        fusion_scores.get('sit_start'))
+                                                        fusion_scores.get('sit_start'),
+                                                        smoothed_hip_heights)
 
-        # 4. 앉기 완료점 감지
+        # 4. 앉기 완료점 감지 (엉덩이가 앉은 높이로 복귀)
         sit_down_end_idx = self._find_sit_down_end(smoothed_angles, sit_down_start_idx,
-                                                    fusion_scores.get('sit_end'))
+                                                    fusion_scores.get('sit_end'),
+                                                    smoothed_hip_heights)
 
         # 5. 회전 감지 (어깨 방향 변화)
         turn_idx = self._find_turn_point(frame_data, stand_up_end_idx, sit_down_start_idx,
@@ -1963,9 +1982,30 @@ class TUGAnalyzer:
         return confidence
 
     def _find_stand_up_start(self, angles: List[float], heights: List[float],
-                              fusion_score: Optional[np.ndarray] = None) -> int:
-        """일어서기 시작점 찾기 (다중신호 융합 지원)"""
+                              fusion_score: Optional[np.ndarray] = None,
+                              hip_heights: Optional[List[float]] = None) -> int:
+        """일어서기 시작점 찾기 (다중신호 융합 + 엉덩이 높이 상승 시작 검증)
+
+        앉은 상태에서 단순히 허리를 숙이는 동작(leg_angle 변동)과
+        실제 기립 시작(엉덩이가 올라가기 시작)을 구분한다.
+        """
         n = len(angles)
+
+        # 엉덩이 높이의 상승 시작점을 보조 신호로 활용
+        hip_rise_start = None
+        if hip_heights and len(hip_heights) > 10:
+            # 초반 안정 구간의 엉덩이 높이 기준선
+            baseline_len = min(30, n // 5)
+            hip_baseline = sum(hip_heights[:baseline_len]) / baseline_len
+            hip_std = (sum((h - hip_baseline) ** 2 for h in hip_heights[:baseline_len]) / baseline_len) ** 0.5
+            rise_threshold = hip_baseline + max(hip_std * 2.5, 0.02)
+            # 엉덩이가 기준선 위로 올라가기 시작하는 첫 지점
+            for i in range(baseline_len, min(n, int(n * 0.5))):
+                if hip_heights[i] > rise_threshold:
+                    # 3프레임 연속 상승 확인
+                    if i + 3 < n and all(hip_heights[i + j] >= rise_threshold for j in range(3)):
+                        hip_rise_start = i
+                        break
 
         # 융합 점수 기반 탐색: 처음 40% 내에서 융합 점수 피크 탐색
         if fusion_score is not None and len(fusion_score) > 0:
@@ -1977,6 +2017,9 @@ class TUGAnalyzer:
                     if search_region[i] > threshold and angles[i] < 145:
                         # 3프레임 연속 확인
                         if i + 3 < search_end and all(search_region[i+j] > threshold * 0.7 for j in range(3)):
+                            # 엉덩이 상승 시작점과 비교하여 더 이른 시점 선택
+                            if hip_rise_start is not None:
+                                return min(i, hip_rise_start)
                             return i
 
         # 기존 임계값 기반 (fallback)
@@ -1984,13 +2027,43 @@ class TUGAnalyzer:
             if angles[i] < self.SITTING_ANGLE_THRESHOLD:
                 increasing = all(angles[i + j] <= angles[i + j + 1] for j in range(5))
                 if increasing:
+                    # 엉덩이 상승 시작점과 비교
+                    if hip_rise_start is not None:
+                        return min(i, hip_rise_start)
                     return i
+
+        # leg_angle 기반 감지 실패 시 엉덩이 높이 상승만으로 판단
+        if hip_rise_start is not None:
+            return hip_rise_start
+
         return 0
 
     def _find_stand_up_end(self, angles: List[float], torso_angles: List[float], start_idx: int,
-                            fusion_score: Optional[np.ndarray] = None) -> int:
-        """일어서기 완료점 찾기 (다중신호 융합 지원)"""
+                            fusion_score: Optional[np.ndarray] = None,
+                            hip_heights: Optional[List[float]] = None) -> int:
+        """일어서기 완료점 찾기 (다중신호 융합 지원 + 엉덩이 높이 검증)
+
+        허리를 숙이기만 해도 leg_angle이 측면 시점에서 일시적으로 160°+로 보이는
+        문제를 방지하기 위해, 엉덩이가 실제로 충분히 올라갔는지 확인한다.
+        """
         n = len(angles)
+
+        # 앉은 자세의 엉덩이 높이 기준선 (start_idx 부근)
+        hip_baseline = 0.0
+        hip_standing_threshold = 0.0
+        if hip_heights and len(hip_heights) > start_idx:
+            baseline_end = min(start_idx + 10, n)
+            hip_baseline = sum(hip_heights[start_idx:baseline_end]) / max(1, baseline_end - start_idx)
+            # 서 있을 때의 최대 엉덩이 높이 추정
+            hip_max = max(hip_heights[start_idx:])
+            # 앉은 높이에서 선 높이까지 변화량의 60% 이상 올라가야 실제 기립
+            hip_standing_threshold = hip_baseline + (hip_max - hip_baseline) * 0.6
+
+        def _hip_risen(idx: int) -> bool:
+            """엉덩이가 충분히 올라갔는지 확인"""
+            if not hip_heights or idx >= len(hip_heights):
+                return True  # hip 데이터 없으면 기존 로직으로 fallback
+            return hip_heights[idx] >= hip_standing_threshold
 
         # 융합 점수 기반: start_idx 이후 융합 점수 최대점 탐색
         if fusion_score is not None and len(fusion_score) > start_idx:
@@ -2000,10 +2073,17 @@ class TUGAnalyzer:
                 threshold = np.mean(search_region) + 1.0 * np.std(search_region)
                 for i in range(len(search_region)):
                     idx = start_idx + i
-                    if search_region[i] > threshold and angles[idx] >= 145:
+                    if search_region[i] > threshold and angles[idx] >= 145 and _hip_risen(idx):
                         return idx
 
-        # 기존 로직 (fallback)
+        # 기존 로직 (fallback) + 엉덩이 높이 조건 추가
+        for i in range(start_idx, n):
+            leg_standing = angles[i] >= self.STANDING_ANGLE_THRESHOLD
+            torso_upright = torso_angles[i] >= self.UPRIGHT_TORSO_THRESHOLD if i < len(torso_angles) else True
+            if leg_standing and torso_upright and _hip_risen(i):
+                return i
+
+        # 엉덩이 높이 조건 없이 다리+상체만으로 재시도
         for i in range(start_idx, n):
             leg_standing = angles[i] >= self.STANDING_ANGLE_THRESHOLD
             torso_upright = torso_angles[i] >= self.UPRIGHT_TORSO_THRESHOLD if i < len(torso_angles) else True
@@ -2017,82 +2097,148 @@ class TUGAnalyzer:
         return min(start_idx + int(n * 0.15), n - 1)
 
     def _find_sit_down_start(self, angles: List[float], stand_end_idx: int,
-                              fusion_score: Optional[np.ndarray] = None) -> int:
-        """앉기 시작점 찾기 - 마지막으로 선 자세에서 앉기로 전환하는 지점
+                              fusion_score: Optional[np.ndarray] = None,
+                              hip_heights: Optional[List[float]] = None) -> int:
+        """앉기 시작점 찾기 - 엉덩이 높이가 내려가기 시작하는 지점
 
-        기존 문제: 뒤에서부터 angles>=145를 찾으면 아직 서 있는 구간 중간을 잡아
-        walk_back 시간이 0.2초 등 비현실적으로 짧아지는 문제가 있었음.
+        기존 문제: leg_angle만으로 판단하면 측면 시점에서 각도가 일시적으로
+        변동하여 앉기 시작을 너무 일찍/늦게 잡는 문제.
 
-        개선: 뒤에서부터 탐색하되, 선 자세(>=145) 구간을 지나서
-        실제 각도가 떨어지기 시작하는 전환점을 찾음.
+        개선: 엉덩이 높이 하강 시작점을 1차 기준으로 사용하고,
+        leg_angle은 보조 검증으로 활용.
         """
         n = len(angles)
         standing_threshold = getattr(self, 'STANDING_ANGLE_THRESHOLD', 145)
 
-        # 전략: 뒤에서 앞으로 탐색하여 "선 자세 구간"을 찾고,
-        # 그 구간의 끝(= 앉기 시작)을 반환
-        # 즉, 마지막 standing 구간의 마지막 프레임 다음이 sit_down_start
+        # 엉덩이 높이 기반: 영상 후반부에서 엉덩이가 내려가기 시작하는 지점
+        hip_drop_idx = None
+        if hip_heights and len(hip_heights) > stand_end_idx:
+            # 서 있는 구간의 엉덩이 높이 기준선 (stand_end 이후 ~ 70% 구간)
+            standing_region_end = min(n, int(n * 0.7))
+            standing_hips = hip_heights[stand_end_idx:standing_region_end]
+            if len(standing_hips) > 5:
+                standing_baseline = sum(standing_hips) / len(standing_hips)
+                standing_std = (sum((h - standing_baseline) ** 2 for h in standing_hips) / len(standing_hips)) ** 0.5
+                # 서 있는 높이에서 유의미하게 떨어지는 지점 (기준선 - 2.5σ 또는 최소 0.03)
+                drop_threshold = standing_baseline - max(standing_std * 2.5, 0.03)
 
-        # 1단계: 영상 뒤쪽 30%에서 앉은 자세(각도 < 130)인 구간 찾기
+                # 뒤에서부터 탐색: 엉덩이가 drop_threshold 이하로 내려간 구간의 시작점
+                for i in range(n - 1, stand_end_idx, -1):
+                    if hip_heights[i] >= drop_threshold:
+                        # 여기서부터 앞으로 가면서 처음 떨어지는 지점이 앉기 시작
+                        for j in range(i, n):
+                            if hip_heights[j] < drop_threshold:
+                                hip_drop_idx = j
+                                break
+                        break
+
+        # leg_angle 기반 (기존 로직)
+        # 뒤에서 앞으로 탐색하여 선 자세 구간의 끝 찾기
         sitting_threshold = 130
         last_sitting_idx = n - 1
-
-        # 맨 끝에서 앉은 자세 구간 확인
         for i in range(n - 1, stand_end_idx, -1):
             if angles[i] >= sitting_threshold:
                 last_sitting_idx = i
                 break
 
-        # 2단계: last_sitting_idx 근처에서 실제 전환점 찾기
-        # 선 자세 → 앉기 전환 = 각도가 standing_threshold 아래로 떨어지는 지점
-        # last_sitting_idx부터 앞으로 가며 standing_threshold 이상인 마지막 프레임 찾기
-        sit_start = last_sitting_idx
+        angle_sit_start = last_sitting_idx
         for i in range(last_sitting_idx, n):
             if angles[i] < standing_threshold:
-                sit_start = i
+                angle_sit_start = i
                 break
 
-        # 3단계: 융합 점수 기반 보정 (있는 경우)
+        # 융합 점수 기반 보정 (있는 경우)
         if fusion_score is not None and len(fusion_score) > 0:
             search_start = max(stand_end_idx, int(n * 0.6))
             if search_start < n - 5:
                 search_region = fusion_score[search_start:]
                 threshold = np.mean(search_region) + 1.0 * np.std(search_region)
-                # 뒤에서부터 탐색하여 높은 점수 + 선 자세 → 앉기 전환 지점
                 for i in range(len(search_region) - 1, -1, -1):
                     idx = search_start + i
                     if search_region[i] > threshold and angles[idx] >= standing_threshold:
-                        # 이 지점에서 앞으로 가며 각도가 떨어지는 곳이 실제 sit_start
                         for j in range(idx, min(n, idx + 30)):
                             if angles[j] < standing_threshold:
-                                return j
-                        return min(idx + 5, n - 1)
+                                angle_sit_start = j
+                                break
+                        else:
+                            angle_sit_start = min(idx + 5, n - 1)
+                        break
 
-        # 4단계: sit_start가 합리적인지 검증
+        # 결과 결합: 엉덩이 하강과 leg_angle 전환 중 더 신뢰할 수 있는 값 선택
+        if hip_drop_idx is not None and hip_drop_idx > stand_end_idx:
+            # 두 신호가 가까우면 (10프레임 이내) 더 늦은 시점 채택 (보수적)
+            if abs(hip_drop_idx - angle_sit_start) < 10:
+                sit_start = max(hip_drop_idx, angle_sit_start)
+            else:
+                # 멀면 엉덩이 높이 우선 (측면 leg_angle 오탐 방지)
+                sit_start = hip_drop_idx
+        else:
+            sit_start = angle_sit_start
+
+        # 검증: stand_end 이후여야 함
         if sit_start <= stand_end_idx:
             sit_start = max(stand_end_idx + 1, int(n * 0.85))
 
         return sit_start
 
     def _find_sit_down_end(self, angles: List[float], start_idx: int,
-                            fusion_score: Optional[np.ndarray] = None) -> int:
-        """앉기 완료점 찾기 (다중신호 융합 지원)"""
+                            fusion_score: Optional[np.ndarray] = None,
+                            hip_heights: Optional[List[float]] = None) -> int:
+        """앉기 완료점 찾기 (다중신호 융합 + 엉덩이 높이 안정화 검증)
+
+        엉덩이가 초기 앉은 높이 수준으로 돌아오고 안정되면 앉기 완료.
+        """
         n = len(angles)
 
+        # 엉덩이 높이 기반: 초기 앉은 높이 수준으로 복귀한 지점
+        hip_settled_idx = None
+        if hip_heights and len(hip_heights) > start_idx:
+            # 초기 앉은 높이 기준 (영상 처음 ~20프레임)
+            baseline_len = min(20, start_idx)
+            if baseline_len > 3:
+                hip_sitting_level = sum(hip_heights[:baseline_len]) / baseline_len
+                hip_std = (sum((h - hip_sitting_level) ** 2 for h in hip_heights[:baseline_len]) / baseline_len) ** 0.5
+                # 앉은 높이 + 여유값 이하로 안정되면 완료
+                settle_threshold = hip_sitting_level + max(hip_std * 2.0, 0.02)
+
+                for i in range(start_idx, n):
+                    if hip_heights[i] <= settle_threshold:
+                        # 3프레임 연속 안정 확인
+                        if i + 3 < n and all(hip_heights[i + j] <= settle_threshold for j in range(3)):
+                            hip_settled_idx = i
+                            break
+
         # 융합 점수 기반: start_idx 이후에서 안정된 낮은 각도 탐색
+        fusion_idx = None
         if fusion_score is not None and len(fusion_score) > start_idx:
             search_region = fusion_score[start_idx:]
             threshold = np.mean(search_region) + 0.8 * np.std(search_region)
             for i in range(len(search_region)):
                 idx = start_idx + i
                 if search_region[i] > threshold and angles[idx] < 135:
-                    return idx
+                    fusion_idx = idx
+                    break
 
-        # 기존 로직 (fallback)
+        # leg_angle 기반 (fallback)
+        angle_idx = n - 1
         for i in range(start_idx, n):
             if angles[i] < self.SITTING_ANGLE_THRESHOLD:
-                return i
-        return n - 1
+                angle_idx = i
+                break
+
+        # 결과 결합: 사용 가능한 신호 중 가장 신뢰할 수 있는 값
+        candidates = []
+        if fusion_idx is not None:
+            candidates.append(fusion_idx)
+        if hip_settled_idx is not None:
+            candidates.append(hip_settled_idx)
+        candidates.append(angle_idx)
+
+        # 여러 신호가 있으면 중간값 선택 (극단적 오탐 방지)
+        if len(candidates) >= 2:
+            candidates.sort()
+            return candidates[len(candidates) // 2]
+        return candidates[0]
 
     def _find_turn_point(self, frame_data: List[Dict], start_idx: int, end_idx: int,
                           fusion_score: Optional[np.ndarray] = None) -> int:
@@ -2379,9 +2525,26 @@ class TUGAnalyzer:
                 continue
 
             phase_info = phases[phase_name]
-            # 각 단계의 시작 시점 프레임 캡처
+            # 각 단계의 대표 시점 프레임 캡처 (단계 중간 지점)
             start_time = phase_info['start_time']
-            start_frame_num = int(start_time * fps)
+            end_time = phase_info['end_time']
+            duration = phase_info['duration']
+
+            # 단계별 최적 캡처 시점: 각 단계의 가장 대표적인 순간
+            if phase_name == 'stand_up':
+                # 일어서기: 60% 지점 (일어서는 동작이 명확히 보이는 순간)
+                capture_time = start_time + duration * 0.6
+            elif phase_name == 'sit_down':
+                # 앉기: 40% 지점 (앉는 동작 초반이 더 명확)
+                capture_time = start_time + duration * 0.4
+            elif phase_name == 'turn':
+                # 회전: 50% 지점 (최대 회전 각도)
+                capture_time = start_time + duration * 0.5
+            else:
+                # walk_out, walk_back: 40% 지점 (안정적 보행 자세)
+                capture_time = start_time + duration * 0.4
+
+            start_frame_num = int(capture_time * fps)
 
             # 프레임으로 이동
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_num)
@@ -2421,7 +2584,7 @@ class TUGAnalyzer:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, label_color, 2)
 
                 # 시간 정보
-                time_text = f"Time: {start_time:.2f}s | Frame: {start_frame_num}"
+                time_text = f"Time: {capture_time:.2f}s | Frame: {start_frame_num}"
                 cv2.putText(annotated_frame, time_text, (10, 55),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
@@ -2431,7 +2594,7 @@ class TUGAnalyzer:
 
                 phase_frames[phase_name] = {
                     "frame": frame_base64,
-                    "time": round(start_time, 2),
+                    "time": round(capture_time, 2),
                     "frame_number": start_frame_num,
                     "label": criteria.get('label', phase_name),
                     "criteria": criteria.get('criteria', ''),
@@ -2448,11 +2611,10 @@ class TUGAnalyzer:
         video_path: str,
         phases: Dict,
         fps: float,
-        clip_padding_before: float = 1.5,
-        clip_padding_after: float = 1.0,
+        clip_padding: float = 0.5,
         output_dir: str = None
     ) -> Dict[str, Dict]:
-        """각 단계 전환 시점 ±1.5초 구간의 MP4 클립 생성"""
+        """각 단계 전체 구간 + 앞뒤 패딩의 MP4 클립 생성"""
         phase_clips = {}
         phase_order = ['stand_up', 'walk_out', 'turn', 'walk_back', 'sit_down']
 
@@ -2479,11 +2641,12 @@ class TUGAnalyzer:
             phase_info = phases[phase_name]
             if not isinstance(phase_info, dict):
                 continue
-            transition_time = phase_info.get('start_time', 0)
 
-            # 클립 경계 계산
-            clip_start = max(0, transition_time - clip_padding_before)
-            clip_end = min(total_duration, transition_time + clip_padding_after)
+            # 단계 전체 구간 + 앞뒤 패딩
+            phase_start = phase_info.get('start_time', 0)
+            phase_end = phase_info.get('end_time', phase_start)
+            clip_start = max(0, phase_start - clip_padding)
+            clip_end = min(total_duration, phase_end + clip_padding)
 
             start_frame = int(clip_start * fps)
             end_frame = min(int(clip_end * fps), total_frames)
@@ -2525,6 +2688,10 @@ class TUGAnalyzer:
                     thumbnail_b64 = base64.b64encode(buffer).decode('utf-8')
 
             writer.release()
+
+            # 단계 클립에 스톱워치 UI 추가
+            add_tug_stopwatch(clip_path, phases, fps, frame_width, frame_height,
+                              time_offset=clip_start)
 
             phase_clips[phase_name] = {
                 "clip_filename": clip_filename,
@@ -2616,8 +2783,7 @@ class TUGAnalyzer:
             if flags.measure_trunk_angular_vel:
                 result["trunk_angular_velocity"] = self._calc_trunk_angular_vel(frame_data, phases, fps)
 
-            if flags.measure_cadence:
-                result["cadence"] = self._calc_cadence(frame_data, phases, fps)
+            # cadence는 10MWT 전용 - TUG에서는 계산하지 않음
 
             if flags.measure_foot_clearance:
                 result["foot_clearance"] = self._calc_foot_clearance(frame_data, phases, fps)

@@ -69,6 +69,7 @@ uploads/
 tmp/
 temp/
 *.tmp
+tmp_*.json
 
 # Frontend
 frontend/node_modules/
@@ -89,13 +90,10 @@ reports/
 *.sqlite3
 
 # Cache files
-*.pkl
+cache/
 
 # Screenshots & images
-screenshot*.png
-shot_*.png
-ss_*.png
-test_kr_font.png
+screenshots/
 
 # Executables
 *.exe
@@ -109,33 +107,19 @@ nul
 # Vite cache
 .vite/
 
-# PowerShell scripts (temporary)
-*.ps1
+# Scripts (ad-hoc development scripts)
+scripts/
 
-# Temporary result/output files
-tmp_*.json
-optimization_*.json
-batch_results*.txt
-analysis_*.txt
-cf_output.txt
-cloudflared_*.txt
+# Results & output
+results/
 
-# Development/test scripts at root
-analyze_*.py
-optimize_*.py
-test_*.py
-validate_*.py
-verify_*.py
-run_*.py
-rebuild_cache.py
-check_tug*.py
-
-# Test HTML
-test_login.html
+# Tools (ngrok, cloudflared, etc.)
+tools/
 
 # Test results
 test-results/
 playwright-report/
+test_response.json
 
-# Misc docs at root
+# Misc docs
 10MWT_TEST100.md

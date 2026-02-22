@@ -998,15 +998,17 @@ export default function VideoUpload() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className={`grid ${result.test_type === 'TUG' ? 'grid-cols-1' : 'grid-cols-2'} gap-4 mb-6`}>
             <div className="text-center p-4 bg-white rounded-xl">
-              <p className="text-xs text-gray-500 mb-1">보행 시간</p>
+              <p className="text-xs text-gray-500 mb-1">{result.test_type === 'TUG' ? '총 소요 시간' : '보행 시간'}</p>
               <p className="text-3xl font-bold text-gray-800">{result.walk_time_seconds?.toFixed(2)}<span className="text-sm text-gray-500">초</span></p>
             </div>
-            <div className="text-center p-4 bg-white rounded-xl">
-              <p className="text-xs text-gray-500 mb-1">보행 속도</p>
-              <p className="text-3xl font-bold text-blue-600">{result.walk_speed_mps?.toFixed(2)}<span className="text-sm text-gray-500">m/s</span></p>
-            </div>
+            {result.test_type !== 'TUG' && (
+              <div className="text-center p-4 bg-white rounded-xl">
+                <p className="text-xs text-gray-500 mb-1">보행 속도</p>
+                <p className="text-3xl font-bold text-blue-600">{result.walk_speed_mps?.toFixed(2)}<span className="text-sm text-gray-500">m/s</span></p>
+              </div>
+            )}
           </div>
 
           <div className="flex space-x-3">

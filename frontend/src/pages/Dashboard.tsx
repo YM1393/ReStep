@@ -69,19 +69,31 @@ export default function Dashboard() {
     try {
       setLoading(true);
       setSearchMode(false);
-      const data = await patientApi.getAll();
+      const data = await patientApi.getAllWithLatestTest();
 
-      // Load latest test for each patient
-      const enriched: PatientWithTests[] = await Promise.all(
-        data.map(async (p: Patient) => {
-          try {
-            const tests = await testApi.getPatientTests(p.id);
-            return { ...p, latestTest: tests[0], testCount: tests.length };
-          } catch {
-            return { ...p, testCount: 0 };
-          }
-        })
-      );
+      // 단일 쿼리 결과를 PatientWithTests 형태로 변환
+      const enriched: PatientWithTests[] = data.map((row: any) => {
+        const patient: any = {
+          id: row.id,
+          patient_number: row.patient_number,
+          name: row.name,
+          gender: row.gender,
+          birth_date: row.birth_date,
+          height_cm: row.height_cm,
+          diagnosis: row.diagnosis,
+          created_at: row.created_at,
+        };
+        const latestTest = row.latest_test_id ? {
+          id: row.latest_test_id,
+          patient_id: row.id,
+          test_date: row.latest_test_date,
+          walk_speed_mps: row.latest_walk_speed_mps,
+          walk_time_seconds: row.latest_walk_time_seconds,
+          test_type: row.latest_test_type,
+          video_filename: row.latest_video_filename,
+        } as unknown as WalkTest : undefined;
+        return { ...patient, latestTest, testCount: row.test_count || 0 };
+      });
 
       setPatients(enriched);
       setError(null);

@@ -30,8 +30,43 @@ def _calc_age(birth_date: str) -> int:
         return 0
 
 
-def _risk_assessment(speed: float, time: float) -> Dict[str, Any]:
+def _risk_assessment(speed: float, time: float, test_type: str = '10MWT') -> Dict[str, Any]:
     """낙상 위험도 평가"""
+    if test_type == 'TUG':
+        # TUG: 시간 기반 평가 (Podsiadlo & Richardson, 1991)
+        if time <= 10:
+            level, label = 'normal', '정상'
+            score = 90
+        elif time <= 14:
+            level, label = 'mild', '경도 위험'
+            score = 70
+        elif time <= 20:
+            level, label = 'moderate', '중등도 위험'
+            score = 45
+        else:
+            level, label = 'high', '고위험'
+            score = 20
+
+        interpretations = []
+        if time <= 10:
+            interpretations.append('독립적 이동 가능')
+        elif time <= 14:
+            interpretations.append('대부분 독립적 이동 가능')
+        elif time <= 20:
+            interpretations.append('이동 시 보조 필요 가능성')
+            interpretations.append('낙상 위험 증가')
+        else:
+            interpretations.append('이동 시 보조 필요')
+            interpretations.append('낙상 고위험')
+
+        return {
+            'level': level,
+            'label': label,
+            'score': score,
+            'interpretations': interpretations,
+        }
+
+    # 10MWT: 속도 기반 평가
     if speed >= 1.2:
         level, label = 'normal', '정상'
     elif speed >= 1.0:
@@ -154,9 +189,10 @@ def generate_ai_report(patient_id: str, test_id: str) -> Dict[str, Any]:
     test_results = {
         'test_type': test_type,
         'test_type_label': {'10MWT': '10m 보행검사', 'TUG': 'TUG 검사', 'BBS': 'BBS 검사'}.get(test_type, test_type),
-        'walk_speed_mps': round(speed, 3),
         'walk_time_seconds': round(time_sec, 2),
     }
+    if test_type != 'TUG':
+        test_results['walk_speed_mps'] = round(speed, 3)
 
     # 5. 보행 분석
     gait_analysis = {
@@ -251,7 +287,7 @@ def generate_ai_report(patient_id: str, test_id: str) -> Dict[str, Any]:
         pass
 
     # 7. 위험도 평가
-    risk = _risk_assessment(speed, time_sec)
+    risk = _risk_assessment(speed, time_sec, test_type)
 
     # 8. 재활 추천
     recommendations = []

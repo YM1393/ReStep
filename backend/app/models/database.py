@@ -383,6 +383,32 @@ class SimpleDB:
         return results
 
     @staticmethod
+    def get_patients_with_latest_test(limit: int = 50) -> list:
+        """환자 목록 + 각 환자의 최신 검사를 단일 쿼리로 반환"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT p.*,
+                   w.id as latest_test_id,
+                   w.test_date as latest_test_date,
+                   w.walk_speed_mps as latest_walk_speed_mps,
+                   w.walk_time_seconds as latest_walk_time_seconds,
+                   w.test_type as latest_test_type,
+                   w.video_filename as latest_video_filename,
+                   (SELECT COUNT(*) FROM walk_tests WHERE patient_id = p.id) as test_count
+            FROM patients p
+            LEFT JOIN walk_tests w ON w.id = (
+                SELECT id FROM walk_tests
+                WHERE patient_id = p.id
+                ORDER BY test_date DESC LIMIT 1
+            )
+            ORDER BY p.created_at DESC LIMIT ?
+        """, (limit,))
+        results = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return results
+
+    @staticmethod
     def search_patients(query: str) -> list:
         conn = get_db_connection()
         cursor = conn.cursor()

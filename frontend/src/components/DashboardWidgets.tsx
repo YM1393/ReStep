@@ -115,8 +115,8 @@ export function SpeedDistributionWidget() {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-5">
       <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">속도 분포</h3>
-      <ResponsiveContainer width="100%" height={200}>
-        <PieChart>
+      <ResponsiveContainer width="100%" height={240}>
+        <PieChart margin={{ top: 20, right: 20, bottom: 5, left: 20 }}>
           <Pie
             data={data}
             cx="50%"

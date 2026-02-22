@@ -275,8 +275,8 @@ export default function History() {
                 최근 검사 비교
               </h3>
 
-              {/* Speed comparison - not for TUG/BBS */}
-              {selectedTestType !== 'TUG' && selectedTestType !== 'BBS' && (
+              {/* Speed comparison - only for 10MWT tab */}
+              {selectedTestType !== 'TUG' && selectedTestType !== 'BBS' && selectedTestType !== 'ALL' && (
                 <div className="mb-4">
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-medium">보행 속도 (m/s)</p>
                   <div className="grid grid-cols-3 gap-4">
@@ -309,7 +309,8 @@ export default function History() {
                 </div>
               )}
 
-              {/* Time comparison */}
+              {/* Time comparison - not for ALL tab */}
+              {selectedTestType !== 'ALL' && (
               <div className="mb-4">
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-medium">
                   {selectedTestType === 'TUG' ? 'TUG 시간 (초)' : '보행 시간 (초)'}
@@ -348,9 +349,10 @@ export default function History() {
                   </div>
                 </div>
               </div>
+              )}
 
-              {/* Comparison Message */}
-              {(() => {
+              {/* Comparison Message - not for ALL tab */}
+              {selectedTestType !== 'ALL' && (() => {
                 const timeDiff = filteredTests[0].walk_time_seconds - filteredTests[1].walk_time_seconds;
                 let message = '';
                 let colorClass = '';
@@ -387,13 +389,20 @@ export default function History() {
                   <span className="text-sm font-normal text-gray-500 dark:text-gray-400 ml-2">(최신 검사)</span>
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                  {cv.cadence && (
+                  {cv.cadence && (filteredTests[0]?.test_type || '10MWT') !== 'TUG' && (
                     <div className="bg-gray-50 dark:bg-gray-700/50 p-3 rounded-xl border-l-4 border-indigo-500">
                       <p className="text-xs text-gray-500 dark:text-gray-400">분당 걸음수</p>
                       <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{cv.cadence.value}<span className="text-xs font-normal text-gray-500 ml-1">steps/min</span></p>
                       <p className={`text-xs ${cv.cadence.value >= 100 && cv.cadence.value <= 130 ? 'text-green-600' : 'text-orange-600'}`}>
                         {cv.cadence.value >= 100 && cv.cadence.value <= 130 ? 'Normal' : 'Abnormal'}
                       </p>
+                    </div>
+                  )}
+                  {cv.cadence && cv.cadence.total_steps > 0 && (filteredTests[0]?.test_type || '10MWT') !== 'TUG' && (
+                    <div className="bg-gray-50 dark:bg-gray-700/50 p-3 rounded-xl border-l-4 border-violet-500">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">총 걸음수</p>
+                      <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{cv.cadence.total_steps}<span className="text-xs font-normal text-gray-500 ml-1">걸음</span></p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">10m 보행 기준</p>
                     </div>
                   )}
                   {selectedTestType !== '10MWT' && cv.stride_length && (
@@ -483,14 +492,22 @@ export default function History() {
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                   </button>
                                 </span>
-                                <span className="text-gray-300 dark:text-gray-600">·</span>
-                                {test.test_type === 'BBS' ? (
-                                  <span className="text-sm text-purple-600 dark:text-purple-400 font-semibold">{test.walk_time_seconds}점/56</span>
-                                ) : (
+                                {selectedTestType !== 'ALL' && (
                                   <>
-                                    <span className="text-sm text-gray-600 dark:text-gray-400">{test.walk_time_seconds.toFixed(2)}초</span>
                                     <span className="text-gray-300 dark:text-gray-600">·</span>
-                                    <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">{test.walk_speed_mps.toFixed(2)}m/s</span>
+                                    {test.test_type === 'BBS' ? (
+                                      <span className="text-sm text-purple-600 dark:text-purple-400 font-semibold">{test.walk_time_seconds}점/56</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-sm text-gray-600 dark:text-gray-400">{test.walk_time_seconds.toFixed(2)}초</span>
+                                        {(test.test_type || '10MWT') !== 'TUG' && (
+                                          <>
+                                            <span className="text-gray-300 dark:text-gray-600">·</span>
+                                            <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">{test.walk_speed_mps.toFixed(2)}m/s</span>
+                                          </>
+                                        )}
+                                      </>
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -553,7 +570,7 @@ export default function History() {
                         return (
                           <div className="px-4 pb-3 border-t border-gray-100 dark:border-gray-700 pt-3">
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 text-center">
-                              {testCv.cadence && (
+                              {testCv.cadence && (test.test_type || '10MWT') !== 'TUG' && (
                                 <div className="bg-gray-50 dark:bg-gray-700/50 p-2 rounded-lg">
                                   <p className="text-[10px] text-gray-400">분당 걸음수</p>
                                   <p className={`text-sm font-bold ${testCv.cadence.value >= 100 && testCv.cadence.value <= 130 ? 'text-green-600' : 'text-orange-600'}`}>{testCv.cadence.value}<span className="text-[10px] font-normal"> spm</span></p>
@@ -704,13 +721,12 @@ export default function History() {
           )}
           </Suspense>
 
-          {/* Walking Route Card - 10MWT only, uses average time/speed */}
+          {/* Walking Route Card - 10MWT only, uses average speed */}
           {id && filteredTests.length > 0 && (selectedTestType === '10MWT' || selectedTestType === 'ALL') && (() => {
             const mwtTests = filteredTests.filter(t => (t.test_type || '10MWT') === '10MWT' && t.walk_speed_mps > 0);
             if (mwtTests.length === 0) return null;
             const avgSpeed = mwtTests.reduce((s, t) => s + t.walk_speed_mps, 0) / mwtTests.length;
-            const avgTime = mwtTests.reduce((s, t) => s + t.walk_time_seconds, 0) / mwtTests.length;
-            return <WalkingRouteCard patientId={id} speedMps={avgSpeed} walkTimeSeconds={avgTime} />;
+            return <WalkingRouteCard patientId={id} speedMps={avgSpeed} />;
           })()}
 
           {/* TUG Result */}

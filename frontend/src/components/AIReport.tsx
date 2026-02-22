@@ -47,7 +47,11 @@ export default function AIReport({ testId }: AIReportProps) {
     lines.push(`검사일: ${ps.test_date}`);
     lines.push('');
     lines.push(`[검사 결과] ${tr.test_type_label}`);
-    lines.push(`보행 속도: ${tr.walk_speed_mps} m/s | 보행 시간: ${tr.walk_time_seconds}초`);
+    if (tr.test_type !== 'TUG') {
+      lines.push(`보행 속도: ${tr.walk_speed_mps} m/s | 보행 시간: ${tr.walk_time_seconds}초`);
+    } else {
+      lines.push(`수행 시간: ${tr.walk_time_seconds}초`);
+    }
     lines.push(`위험도: ${risk.label} (${risk.score}/100)`);
     risk.interpretations?.forEach((i: string) => lines.push(`  - ${i}`));
     lines.push('');
@@ -156,13 +160,15 @@ export default function AIReport({ testId }: AIReportProps) {
             <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded-full text-xs font-medium">{tr.test_type_label}</span>
             <span className="text-xs text-gray-500 dark:text-gray-400">{ps.test_date}</span>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className={`grid ${tr.test_type !== 'TUG' ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+            {tr.test_type !== 'TUG' && (
+              <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <div className="text-xs text-gray-500 dark:text-gray-400">보행 속도</div>
+                <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{tr.walk_speed_mps} <span className="text-sm font-normal">m/s</span></div>
+              </div>
+            )}
             <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-              <div className="text-xs text-gray-500 dark:text-gray-400">보행 속도</div>
-              <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{tr.walk_speed_mps} <span className="text-sm font-normal">m/s</span></div>
-            </div>
-            <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-              <div className="text-xs text-gray-500 dark:text-gray-400">보행 시간</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{tr.test_type === 'TUG' ? '수행 시간' : '보행 시간'}</div>
               <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{tr.walk_time_seconds} <span className="text-sm font-normal">초</span></div>
             </div>
           </div>
