@@ -167,6 +167,54 @@ def init_db():
         )
     """)
 
+    # Walking routes
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS walking_routes (
+            id VARCHAR(36) PRIMARY KEY,
+            patient_id VARCHAR(36) NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+            origin_address TEXT,
+            origin_lat DOUBLE PRECISION,
+            origin_lng DOUBLE PRECISION,
+            dest_address TEXT,
+            dest_lat DOUBLE PRECISION,
+            dest_lng DOUBLE PRECISION,
+            distance_meters DOUBLE PRECISION,
+            duration_seconds DOUBLE PRECISION,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    # Distance goals
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS distance_goals (
+            id VARCHAR(36) PRIMARY KEY,
+            patient_id VARCHAR(36) NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+            distance_meters DOUBLE PRECISION NOT NULL,
+            label VARCHAR(255),
+            emoji VARCHAR(10) DEFAULT '📍',
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    # Report templates
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS report_templates (
+            id VARCHAR(36) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            config TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+    # Sites
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sites (
+            id VARCHAR(36) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
     conn.commit()
     cur.close()
     conn.close()
@@ -335,6 +383,33 @@ class SimpleDB:
         conn = get_db_connection()
         cur = _dict_cursor(conn)
         cur.execute("SELECT * FROM patients ORDER BY created_at DESC LIMIT %s", (limit,))
+        results = _rows_to_dicts(cur.fetchall())
+        cur.close()
+        conn.close()
+        return results
+
+    @staticmethod
+    def get_patients_with_latest_test(limit: int = 50) -> list:
+        conn = get_db_connection()
+        cur = _dict_cursor(conn)
+        cur.execute("""
+            SELECT p.*,
+                   w.test_date AS latest_test_date,
+                   w.test_type AS latest_test_type,
+                   w.walk_time_seconds AS latest_walk_time,
+                   w.walk_speed_mps AS latest_walk_speed,
+                   w.video_url AS latest_video_url
+            FROM patients p
+            LEFT JOIN LATERAL (
+                SELECT test_date, test_type, walk_time_seconds, walk_speed_mps, video_url
+                FROM walk_tests
+                WHERE patient_id = p.id
+                ORDER BY test_date DESC
+                LIMIT 1
+            ) w ON true
+            ORDER BY p.created_at DESC
+            LIMIT %s
+        """, (limit,))
         results = _rows_to_dicts(cur.fetchall())
         cur.close()
         conn.close()
@@ -820,6 +895,55 @@ class SimpleDB:
         cur.close()
         conn.close()
         return results
+
+
+    # ===== Walking Routes =====
+
+    @staticmethod
+    def create_walking_route(data: dict) -> dict:
+        conn = get_db_connection()
+        cur = _dict_cursor(conn)
+        route_id = SimpleDB.generate_id()
+        now = datetime.now().isoformat()
+        cur.execute(
+            "INSERT INTO walking_routes (id, patient_id, origin_address, origin_lat, origin_lng, "
+            "dest_address, dest_lat, dest_lng, distance_meters, duration_seconds, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (route_id, data["patient_id"], data.get("origin_address"),
+             data.get("origin_lat"), data.get("origin_lng"),
+             data.get("dest_address"), data.get("dest_lat"), data.get("dest_lng"),
+             data.get("distance_meters"), data.get("duration_seconds"), now),
+        )
+        conn.commit()
+        cur.execute("SELECT * FROM walking_routes WHERE id = %s", (route_id,))
+        result = _row_to_dict(cur.fetchone())
+        cur.close()
+        conn.close()
+        return result
+
+    @staticmethod
+    def get_patient_walking_routes(patient_id: str) -> list:
+        conn = get_db_connection()
+        cur = _dict_cursor(conn)
+        cur.execute(
+            "SELECT * FROM walking_routes WHERE patient_id = %s ORDER BY created_at DESC",
+            (patient_id,),
+        )
+        results = _rows_to_dicts(cur.fetchall())
+        cur.close()
+        conn.close()
+        return results
+
+    @staticmethod
+    def delete_walking_route(route_id: str) -> bool:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM walking_routes WHERE id = %s", (route_id,))
+        conn.commit()
+        deleted = cur.rowcount > 0
+        cur.close()
+        conn.close()
+        return deleted
 
 
 # Module-level convenience instance

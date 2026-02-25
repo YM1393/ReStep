@@ -64,9 +64,20 @@ app.include_router(distance_goals.router, prefix="/api/distance-goals", tags=["d
 app.include_router(walking_routes.router, prefix="/api/walking-routes", tags=["walking-routes"])
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables on startup."""
+    from app.models.db_factory import init_db
+    try:
+        init_db()
+        print("[STARTUP] Database initialized successfully")
+    except Exception as e:
+        print(f"[STARTUP] Database init warning: {e}")
+
+
 @app.get("/")
 async def root():
-    return {"message": "10m Walk Test API", "version": "1.0.0"}
+    return {"message": "ReStep API", "version": "2.0.0"}
 
 
 @app.get("/health")
