@@ -67,12 +67,15 @@ app.include_router(walking_routes.router, prefix="/api/walking-routes", tags=["w
 @app.on_event("startup")
 async def startup_event():
     """Initialize database tables on startup."""
-    from app.models.db_factory import init_db
+    import traceback
+    from app.models.db_factory import init_db, DB_TYPE
+    print(f"[STARTUP] DB_TYPE={DB_TYPE}")
     try:
         init_db()
         print("[STARTUP] Database initialized successfully")
     except Exception as e:
-        print(f"[STARTUP] Database init warning: {e}")
+        print(f"[STARTUP] Database init error: {e}")
+        traceback.print_exc()
 
 
 @app.get("/")

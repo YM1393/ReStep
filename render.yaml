@@ -38,6 +38,6 @@ services:
           name: restep-db
           property: password
       - key: DB_SSLMODE
-        value: require
+        value: disable
       - key: UPLOAD_DIR
         value: ./uploads
