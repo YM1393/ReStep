@@ -20,12 +20,20 @@ load_dotenv()
 
 def _get_pg_dsn() -> str:
     """Build a PostgreSQL DSN from environment variables."""
+    # Support DATABASE_URL (Render provides this automatically)
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        # Convert postgres:// to postgresql:// if needed
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        return database_url
+
     host = os.getenv("DB_HOST", "localhost")
     port = os.getenv("DB_PORT", "5432")
     name = os.getenv("DB_NAME", "tenm_wt")
     user = os.getenv("DB_USER", "postgres")
     password = os.getenv("DB_PASSWORD", "")
-    sslmode = os.getenv("DB_SSLMODE", "require")
+    sslmode = os.getenv("DB_SSLMODE", "disable")
     return f"host={host} port={port} dbname={name} user={user} password={password} sslmode={sslmode}"
 
 
