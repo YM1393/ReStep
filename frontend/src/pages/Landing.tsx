@@ -25,8 +25,8 @@ export default function Landing() {
         <div className="max-w-[1200px] mx-auto px-8 py-4 flex justify-between items-center">
           <div className="flex items-center gap-2 text-2xl font-bold text-[#0066CC]">
             <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-sm font-bold"
-              style={{ background: 'linear-gradient(135deg, #0066CC, #06B6D4)' }}>10M</div>
-            보행검사 시스템
+              style={{ background: 'linear-gradient(135deg, #0066CC, #06B6D4)' }}>Re</div>
+            ReStep
           </div>
           <ul className="hidden md:flex gap-8 items-center list-none">
             <li><button onClick={() => scrollTo('features')} className="font-medium hover:text-[#0066CC] focus:text-[#0066CC] focus:outline-none focus:ring-2 focus:ring-[#0066CC] focus:ring-offset-2 rounded transition-colors">기능</button></li>
@@ -346,7 +346,7 @@ export default function Landing() {
         <div className="max-w-[1200px] mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-8">
             <div>
-              <h3 className="text-xl font-bold mb-4">10m 보행검사 시스템</h3>
+              <h3 className="text-xl font-bold mb-4">ReStep</h3>
               <p className="opacity-80 leading-relaxed">
                 AI 기반 임상 보행 분석 플랫폼으로
                 물리치료사와 환자 모두를 위한
@@ -379,7 +379,7 @@ export default function Landing() {
             </div>
           </div>
           <div className="border-t border-white/10 pt-6 text-center opacity-70">
-            <p>&copy; 2026 10m 보행검사 시스템. All rights reserved.</p>
+            <p>&copy; 2026 ReStep. All rights reserved.</p>
           </div>
         </div>
       </footer>
