@@ -1,0 +1,40 @@
+databases:
+  - name: restep-db
+    plan: free
+    databaseName: restep
+    user: restep_user
+
+services:
+  - type: web
+    name: restep-api
+    plan: free
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DB_TYPE
+        value: postgres
+      - key: DB_HOST
+        fromDatabase:
+          name: restep-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: restep-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: restep-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: restep-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: restep-db
+          property: password
+      - key: DB_SSLMODE
+        value: require
+      - key: UPLOAD_DIR
+        value: /app/uploads

@@ -10,3 +10,6 @@ aiofiles==23.2.1
 bcrypt==4.1.2
 psycopg2-binary==2.9.11
 Pillow>=10.4.0
+slowapi==0.1.9
+imageio==2.37.2
+imageio-ffmpeg==0.6.0
