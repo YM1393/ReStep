@@ -68,7 +68,7 @@ export default function Register() {
         {/* 로고 영역 */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-extrabold text-white tracking-tight mb-1">ReStep</h1>
-          <p className="text-blue-100 mt-2">물리치료사 회원가입</p>
+          <p className="text-blue-100 mt-2 text-sm">다시 걷는 그날까지 ReStep이 함께합니다</p>
         </div>
 
         {/* 회원가입 카드 */}

@@ -46,7 +46,7 @@ export default function Login({ onLogin }: LoginProps) {
         {/* 로고 영역 */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-extrabold text-white tracking-tight mb-1">ReStep</h1>
-          <p className="text-blue-100 dark:text-gray-400 mt-2">임상 보행 분석 시스템</p>
+          <p className="text-blue-100 dark:text-gray-400 mt-2 text-sm">다시 걷는 그날까지 ReStep이 함께합니다</p>
         </div>
 
         {/* 로그인 카드 */}

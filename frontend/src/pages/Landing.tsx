@@ -346,6 +346,7 @@ export default function Landing() {
             <div>
               <h3 className="text-xl font-bold mb-4">ReStep</h3>
               <p className="opacity-80 leading-relaxed">
+                다시 걷는 그날까지 ReStep이 함께합니다.
                 AI 기반 임상 보행 분석 플랫폼으로
                 물리치료사와 환자 모두를 위한
                 혁신적인 솔루션을 제공합니다.

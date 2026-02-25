@@ -394,7 +394,7 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
       <footer className="hidden sm:block bg-white dark:bg-gray-800 border-t dark:border-gray-700 mt-8">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
           <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-            ReStep - 임상 보행 분석 시스템
+            다시 걷는 그날까지 ReStep이 함께합니다
           </p>
         </div>
       </footer>
