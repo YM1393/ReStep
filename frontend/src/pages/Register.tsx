@@ -67,10 +67,7 @@ export default function Register() {
       <div className="max-w-md w-full animate-fadeIn">
         {/* 로고 영역 */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-2xl shadow-lg mb-4">
-            <span className="text-blue-500 font-bold text-2xl">Re</span>
-          </div>
-          <h1 className="text-3xl font-bold text-white">ReStep</h1>
+          <h1 className="text-4xl font-extrabold text-white tracking-tight mb-1">ReStep</h1>
           <p className="text-blue-100 mt-2">물리치료사 회원가입</p>
         </div>
 

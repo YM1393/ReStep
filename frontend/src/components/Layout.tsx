@@ -122,14 +122,8 @@ export default function Layout({ children, user, onLogout }: LayoutProps) {
         <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             {/* 로고 */}
-            <Link to="/" className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-md">
-                <span className="text-white font-bold text-sm">Re</span>
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">ReStep</h1>
-                <p className="text-xs text-gray-500 dark:text-gray-400">임상 보행 분석</p>
-              </div>
+            <Link to="/" className="flex items-center">
+              <span className="text-2xl font-extrabold text-[#1A8CFF] tracking-tight">ReStep</span>
             </Link>
 
             {/* 네비게이션 */}

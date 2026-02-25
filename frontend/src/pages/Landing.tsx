@@ -23,9 +23,7 @@ export default function Landing() {
       <nav aria-label="메인 네비게이션" className={`fixed top-0 w-full z-50 transition-all duration-300 ${scrolled ? 'shadow-lg' : 'shadow-sm'}`}
         style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)' }}>
         <div className="max-w-[1200px] mx-auto px-8 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-2 text-2xl font-bold text-[#0066CC]">
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-sm font-bold"
-              style={{ background: 'linear-gradient(135deg, #0066CC, #06B6D4)' }}>Re</div>
+          <div className="text-2xl font-extrabold text-[#1A8CFF] tracking-tight">
             ReStep
           </div>
           <ul className="hidden md:flex gap-8 items-center list-none">
