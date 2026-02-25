@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Header, HTTPException
 from typing import Optional
 
-from app.models.database import db
+from app.models.db_factory import db
 
 router = APIRouter()
 

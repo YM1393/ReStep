@@ -12,7 +12,7 @@ from typing import Optional, List, Dict
 from datetime import datetime
 from dotenv import load_dotenv
 
-from app.models.database import db
+from app.models.db_factory import db
 from app.routers.websocket import get_manager as get_ws_manager
 from app.services.audit_logger import log_action
 from app.services.cache_service import cache

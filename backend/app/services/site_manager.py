@@ -7,7 +7,7 @@ Sites are optional.  When a user has no site_id, they see all data
 from datetime import datetime
 from typing import Optional
 
-from app.models.database import get_db_connection, SimpleDB
+from app.models.db_factory import get_db_connection, SimpleDB
 
 
 def get_sites() -> list:

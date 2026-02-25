@@ -13,3 +13,5 @@ Pillow>=10.4.0
 slowapi==0.1.9
 imageio==2.37.2
 imageio-ffmpeg==0.6.0
+scipy>=1.11.0
+PyJWT>=2.8.0

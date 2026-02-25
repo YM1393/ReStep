@@ -5,7 +5,7 @@ from typing import Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from app.models.database import db, verify_password
+from app.models.db_factory import db, verify_password
 from app.utils.jwt_handler import (
     create_access_token,
     create_refresh_token,

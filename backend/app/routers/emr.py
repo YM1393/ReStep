@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from app.models.database import db
+from app.models.db_factory import db
 from app.services.emr_integration import fhir_client, FHIRClient
 
 router = APIRouter()

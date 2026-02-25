@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Header, HTTPException, Query
 from typing import Optional
 
-from app.models.database import db, get_db_connection
+from app.models.db_factory import db, get_db_connection
 
 router = APIRouter()
 

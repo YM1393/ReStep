@@ -3,7 +3,7 @@ import json
 import asyncio
 from typing import Optional
 
-from app.models.database import db
+from app.models.db_factory import db
 from app.routers.websocket import get_manager
 
 

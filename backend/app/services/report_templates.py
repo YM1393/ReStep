@@ -8,7 +8,7 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Dict, List
 
-from app.models.database import get_db_connection, SimpleDB
+from app.models.db_factory import get_db_connection, SimpleDB
 
 
 @dataclass

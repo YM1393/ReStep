@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-from app.models.database import db
+from app.models.db_factory import db
 from app.services.comparison_report import generate_comparison_report
 from app.services.trend_analysis import analyze_trends
 from app.services.rehab_recommendations import get_recommendations

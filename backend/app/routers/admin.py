@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta
 
-from app.models.database import db, get_db_connection, DB_PATH
+from app.models.db_factory import db, get_db_connection, DB_PATH
 from app.services.audit_logger import log_action, get_audit_logs, get_audit_logs_count
 from app.services.cache_service import cache
 from app.services import site_manager

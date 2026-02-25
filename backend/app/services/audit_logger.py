@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from typing import Optional
-from app.models.database import get_db_connection, SimpleDB
+from app.models.db_factory import get_db_connection, SimpleDB
 
 
 def log_action(

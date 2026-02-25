@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date
 
-from app.models.database import db
+from app.models.db_factory import db
 from app.services.audit_logger import log_action
 from app.services.cache_service import cache
 
