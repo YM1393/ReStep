@@ -235,6 +235,10 @@ def _draw_mwt_stopwatch_frame(
     panel_h = int(70 * scale)
     margin = int(20 * scale)
 
+    if frame_idx < start_frame:
+        # 측정 시작 전 - 표시 없음
+        return
+
     x0 = frame_width - panel_w - margin
     y0 = frame_height - panel_h - margin
     x1 = frame_width - margin
@@ -245,11 +249,7 @@ def _draw_mwt_stopwatch_frame(
     font_size = int(28 * scale)
     total_measure_frames = max(end_frame - start_frame, 1)
 
-    if frame_idx < start_frame:
-        # 측정 시작 전
-        patch, alpha = render_text_patch("대기", font_size, (150, 150, 150))
-        blit_text_patch(frame, patch, alpha, x0 + int(22 * scale), y0 + int(10 * scale))
-    elif frame_idx <= end_frame:
+    if frame_idx <= end_frame:
         # 측정 중 - 경과 시간 표시 (보정된 시간 기준으로 비례 계산)
         progress = (frame_idx - start_frame) / total_measure_frames
         elapsed = progress * measure_time

@@ -1,17 +1,22 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { testApi } from '../services/api';
 import type { WalkTest, VideoInfo, TUGAnalysisData, AnalysisData } from '../types';
 import TUGPhaseFrames from './TUGPhaseFrames';
+import TUGAngleSyncChart from './TUGAngleSyncChart';
+import type { TUGAngleSyncChartHandle } from './TUGAngleSyncChart';
+import TUGSideAngleSyncChart from './TUGSideAngleSyncChart';
+import type { TUGSideAngleSyncChartHandle } from './TUGSideAngleSyncChart';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface VideoModalProps {
   test: WalkTest;
+  previousTest?: WalkTest;
   onClose: () => void;
 }
 
 type OverlayVideoType = 'side' | 'front';
 
-export default function VideoModal({ test, onClose }: VideoModalProps) {
+export default function VideoModal({ test, previousTest, onClose }: VideoModalProps) {
   const focusTrapRef = useFocusTrap(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayVideoRef = useRef<HTMLVideoElement>(null);
@@ -22,6 +27,20 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
   const [overlayType, setOverlayType] = useState<OverlayVideoType>('side'); // TUG는 기본 측면
   const [sequentialMode, setSequentialMode] = useState(false); // 순차재생 모드
   const [seqPlaying, setSeqPlaying] = useState<'side' | 'front'>('side'); // 현재 순차재생 중인 영상
+
+  // Angle visualization refs (TUG front view)
+  const angleDataRef = useRef<{ time: number; shoulder_tilt: number; hip_tilt: number }[] | undefined>(undefined);
+  const shoulderLabelRef = useRef<HTMLSpanElement>(null);
+  const hipLabelRef = useRef<HTMLSpanElement>(null);
+  const angleOverlayRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<TUGAngleSyncChartHandle>(null);
+
+  // Angle visualization refs (TUG side view)
+  const sideAngleDataRef = useRef<{ time: number; knee_angle: number; hip_angle: number }[] | undefined>(undefined);
+  const kneeLabelRef = useRef<HTMLSpanElement>(null);
+  const sideHipLabelRef = useRef<HTMLSpanElement>(null);
+  const sideAngleOverlayRef = useRef<HTMLDivElement>(null);
+  const sideChartRef = useRef<TUGSideAngleSyncChartHandle>(null);
 
   const videoUrl = testApi.getVideoUrl(test);
 
@@ -84,6 +103,60 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
 
   // 순차재생: 정면 영상 가능 여부
   const hasFrontVideo = !!(tugOriginalUrls?.front || overlayUrls.front);
+
+  // TUG angle data (front: shoulder/hip tilt, side: knee/hip joint angles)
+  const tugData = isTUG ? (test.analysis_data as TUGAnalysisData | null) : null;
+  const angleData = tugData?.angle_data;
+  const sideAngleData = tugData?.side_angle_data;
+  const showAngleViz = isTUG && !!angleData?.length && activeViewType === 'front';
+  const showSideAngleViz = isTUG && !!sideAngleData?.length && activeViewType === 'side';
+
+  // Keep refs in sync for use in timeupdate callback (avoids stale closure)
+  angleDataRef.current = angleData;
+  sideAngleDataRef.current = sideAngleData;
+
+  // Video timeupdate handler — updates angle overlay text + chart cursor via refs (no re-render)
+  const handleVideoTimeUpdate = useCallback(() => {
+    const video = overlayVideoRef.current ?? videoRef.current;
+    if (!video) return;
+    const currentTime = video.currentTime;
+
+    // Front view: shoulder/hip tilt
+    const frontData = angleDataRef.current;
+    if (frontData?.length) {
+      let lo = 0, hi = frontData.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (frontData[mid].time < currentTime) lo = mid + 1;
+        else hi = mid;
+      }
+      const idx = lo > 0 && Math.abs(frontData[lo - 1].time - currentTime) < Math.abs(frontData[lo].time - currentTime)
+        ? lo - 1 : lo;
+      const pt = frontData[idx];
+      if (shoulderLabelRef.current) shoulderLabelRef.current.textContent = `${pt.shoulder_tilt.toFixed(1)}°`;
+      if (hipLabelRef.current) hipLabelRef.current.textContent = `${pt.hip_tilt.toFixed(1)}°`;
+      if (angleOverlayRef.current) angleOverlayRef.current.style.display = '';
+      chartRef.current?.updateTime(pt.time);
+    }
+
+    // Side view: knee/hip joint angles
+    const sideData = sideAngleDataRef.current;
+    if (sideData?.length) {
+      let lo = 0, hi = sideData.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (sideData[mid].time < currentTime) lo = mid + 1;
+        else hi = mid;
+      }
+      const idx = lo > 0 && Math.abs(sideData[lo - 1].time - currentTime) < Math.abs(sideData[lo].time - currentTime)
+        ? lo - 1 : lo;
+      const pt = sideData[idx];
+      if (kneeLabelRef.current) kneeLabelRef.current.textContent = `${pt.knee_angle.toFixed(0)}°`;
+      if (sideHipLabelRef.current) sideHipLabelRef.current.textContent = `${pt.hip_angle.toFixed(0)}°`;
+      if (sideAngleOverlayRef.current) sideAngleOverlayRef.current.style.display = '';
+      sideChartRef.current?.updateTime(pt.time);
+    }
+  }, []);
 
   useEffect(() => {
     const loadVideoInfo = async () => {
@@ -265,9 +338,48 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
                   setShowPoseOverlay(false);
                 }}
                 onEnded={sequentialMode ? handleSequentialEnded : undefined}
+                onTimeUpdate={(showAngleViz || showSideAngleViz) ? handleVideoTimeUpdate : undefined}
               >
                 브라우저가 동영상 재생을 지원하지 않습니다.
               </video>
+              {/* 어깨/골반 각도 텍스트 오버레이 (정면) */}
+              {showAngleViz && (
+                <div
+                  ref={angleOverlayRef}
+                  className="absolute top-3 right-3 bg-black/70 text-white text-xs px-2.5 py-1.5 rounded-lg font-mono space-y-0.5"
+                  style={{ display: 'none' }}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-blue-400 rounded-full inline-block" />
+                    <span className="text-gray-300">어깨</span>
+                    <span ref={shoulderLabelRef} className="font-bold text-blue-300">--</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-emerald-400 rounded-full inline-block" />
+                    <span className="text-gray-300">골반</span>
+                    <span ref={hipLabelRef} className="font-bold text-emerald-300">--</span>
+                  </div>
+                </div>
+              )}
+              {/* 무릎/골반 각도 텍스트 오버레이 (측면) */}
+              {showSideAngleViz && (
+                <div
+                  ref={sideAngleOverlayRef}
+                  className="absolute top-3 right-3 bg-black/70 text-white text-xs px-2.5 py-1.5 rounded-lg font-mono space-y-0.5"
+                  style={{ display: 'none' }}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-blue-400 rounded-full inline-block" />
+                    <span className="text-gray-300">무릎</span>
+                    <span ref={kneeLabelRef} className="font-bold text-blue-300">--</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-orange-400 rounded-full inline-block" />
+                    <span className="text-gray-300">골반</span>
+                    <span ref={sideHipLabelRef} className="font-bold text-orange-300">--</span>
+                  </div>
+                </div>
+              )}
               {/* 포즈 오버레이 안내 배지 */}
               <div className="absolute top-4 left-4 px-3 py-1 bg-green-500 text-white text-sm font-medium rounded-lg shadow-lg flex items-center space-x-2">
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -283,18 +395,59 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
               </div>
             </div>
           ) : (
-            <video
-              ref={videoRef}
-              key={currentVideoUrl}
-              src={currentVideoUrl || undefined}
-              controls
-              autoPlay
-              className="w-full max-h-[60vh]"
-              onError={() => setError('동영상을 불러올 수 없습니다.')}
-              onEnded={sequentialMode ? handleSequentialEnded : undefined}
-            >
-              브라우저가 동영상 재생을 지원하지 않습니다.
-            </video>
+            <div className="relative">
+              <video
+                ref={videoRef}
+                key={currentVideoUrl}
+                src={currentVideoUrl || undefined}
+                controls
+                autoPlay
+                className="w-full max-h-[60vh]"
+                onError={() => setError('동영상을 불러올 수 없습니다.')}
+                onEnded={sequentialMode ? handleSequentialEnded : undefined}
+                onTimeUpdate={(showAngleViz || showSideAngleViz) ? handleVideoTimeUpdate : undefined}
+              >
+                브라우저가 동영상 재생을 지원하지 않습니다.
+              </video>
+              {/* 어깨/골반 각도 텍스트 오버레이 (원본 정면) */}
+              {showAngleViz && (
+                <div
+                  ref={angleOverlayRef}
+                  className="absolute top-3 right-3 bg-black/70 text-white text-xs px-2.5 py-1.5 rounded-lg font-mono space-y-0.5"
+                  style={{ display: 'none' }}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-blue-400 rounded-full inline-block" />
+                    <span className="text-gray-300">어깨</span>
+                    <span ref={shoulderLabelRef} className="font-bold text-blue-300">--</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-emerald-400 rounded-full inline-block" />
+                    <span className="text-gray-300">골반</span>
+                    <span ref={hipLabelRef} className="font-bold text-emerald-300">--</span>
+                  </div>
+                </div>
+              )}
+              {/* 무릎/골반 각도 텍스트 오버레이 (원본 측면) */}
+              {showSideAngleViz && (
+                <div
+                  ref={sideAngleOverlayRef}
+                  className="absolute top-3 right-3 bg-black/70 text-white text-xs px-2.5 py-1.5 rounded-lg font-mono space-y-0.5"
+                  style={{ display: 'none' }}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-blue-400 rounded-full inline-block" />
+                    <span className="text-gray-300">무릎</span>
+                    <span ref={kneeLabelRef} className="font-bold text-blue-300">--</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-orange-400 rounded-full inline-block" />
+                    <span className="text-gray-300">골반</span>
+                    <span ref={sideHipLabelRef} className="font-bold text-orange-300">--</span>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -317,6 +470,20 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* TUG 어깨/골반 기울기 동기화 그래프 (정면) */}
+        {showAngleViz && angleData && (
+          <div className="px-4 pt-3 pb-1 border-t dark:border-gray-700">
+            <TUGAngleSyncChart ref={chartRef} angleData={angleData} />
+          </div>
+        )}
+
+        {/* TUG 무릎/골반 관절 각도 동기화 그래프 (측면) */}
+        {showSideAngleViz && sideAngleData && (
+          <div className="px-4 pt-3 pb-1 border-t dark:border-gray-700">
+            <TUGSideAngleSyncChart ref={sideChartRef} angleData={sideAngleData} />
           </div>
         )}
 
@@ -351,6 +518,11 @@ export default function VideoModal({ test, onClose }: VideoModalProps) {
               phaseFrames={(test.analysis_data as TUGAnalysisData).phase_frames!}
               phaseClips={(test.analysis_data as TUGAnalysisData).phase_clips}
               testId={test.id}
+              testDate={test.test_date}
+              prevPhaseFrames={previousTest?.test_type === 'TUG' && previousTest.analysis_data ? (previousTest.analysis_data as TUGAnalysisData).phase_frames : undefined}
+              prevPhaseClips={previousTest?.test_type === 'TUG' && previousTest.analysis_data ? (previousTest.analysis_data as TUGAnalysisData).phase_clips : undefined}
+              prevTestId={previousTest?.id}
+              prevTestDate={previousTest?.test_date}
             />
           </div>
         )}

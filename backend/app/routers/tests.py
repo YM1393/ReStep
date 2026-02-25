@@ -181,21 +181,6 @@ def parse_analysis_data(test: dict) -> dict:
     return result
 
 
-# ArUco 마커 PDF 다운로드
-@router.get("/aruco/markers/pdf")
-async def download_aruco_markers(marker_size_cm: float = 25.0):
-    """10MWT용 ArUco 마커 PDF 생성 및 다운로드"""
-    from analysis.aruco_marker_generator import generate_marker_pdf
-
-    pdf_path = os.path.join(UPLOAD_DIR, "aruco_markers.pdf")
-    generate_marker_pdf(pdf_path, marker_size_cm=marker_size_cm)
-
-    return FileResponse(
-        pdf_path,
-        media_type="application/pdf",
-        filename="10MWT_ArUco_Markers.pdf"
-    )
-
 
 # 디버그 엔드포인트 (다른 라우트보다 먼저 정의해야 함)
 @router.get("/debug/test-save")
@@ -504,19 +489,17 @@ async def get_analysis_status(file_id: str):
 
 
 @router.post("/{patient_id}/upload-tug")
-async def upload_tug_dual_video(
+async def upload_tug_video(
     patient_id: str,
     background_tasks: BackgroundTasks,
-    side_video: UploadFile = File(..., description="측면 영상 (보행 분석, 기립/착석 속도)"),
-    front_video: UploadFile = File(..., description="정면 영상 (어깨/골반 기울기)"),
+    side_video: UploadFile = File(..., description="측면 영상 (보행 분석, 기립/착석 속도, 관절각도)"),
     user_id: str = Header(None, alias="X-User-Id"),
     user_role: str = Header(None, alias="X-User-Role"),
     is_approved: str = Header(None, alias="X-User-Approved")
 ):
-    """TUG 검사 두 영상 업로드 및 분석 시작
+    """TUG 검사 측면 영상 업로드 및 분석 시작
 
-    - side_video: 측면 영상 (보행 분석, 기립/착석 속도 측정용)
-    - front_video: 정면 영상 (어깨/골반 기울기 분석용)
+    - side_video: 측면 영상 (보행 분석, 기립/착석 속도, 관절각도 측정용)
     """
     verify_approved_therapist(user_id, user_role, is_approved)
 
@@ -540,15 +523,6 @@ async def upload_tug_dual_video(
         content = await side_video.read()
         await out_file.write(content)
 
-    # 정면 영상 저장
-    front_ext = os.path.splitext(front_video.filename)[1]
-    front_filename = f"{file_id}_front{front_ext}"
-    front_path = os.path.join(UPLOAD_DIR, front_filename)
-
-    async with aiofiles.open(front_path, 'wb') as out_file:
-        content = await front_video.read()
-        await out_file.write(content)
-
     # 분석 상태 초기화
     initial_status = {
         "status": "processing",
@@ -557,14 +531,13 @@ async def upload_tug_dual_video(
         "current_frame": None
     }
     save_analysis_status(file_id, initial_status)
-    print(f"[DEBUG] Initialized TUG dual video status for {file_id}")
+    print(f"[DEBUG] Initialized TUG video status for {file_id}")
 
     # 백그라운드에서 분석 실행
     background_tasks.add_task(
-        analyze_tug_dual_video_task,
+        analyze_tug_video_task,
         file_id,
         side_path,
-        front_path,
         patient_id,
         patient_height_cm,
         diagnosis
@@ -577,14 +550,13 @@ async def upload_tug_dual_video(
     }
 
 
-def run_tug_dual_analysis_sync(
+def run_tug_analysis_sync(
     file_id: str,
     side_video_path: str,
-    front_video_path: str,
     patient_height_cm: float,
     diagnosis: str = None
 ):
-    """TUG 두 영상 동기식 분석 (스레드에서 실행됨)"""
+    """TUG 측면 영상 동기식 분석 (스레드에서 실행됨)"""
     import sys
 
     # 캐시 무시하고 새로 로드
@@ -597,7 +569,7 @@ def run_tug_dual_analysis_sync(
 
     # 질환별 프로파일 매칭
     disease_profile = resolve_profile(diagnosis)
-    print(f"[DEBUG] TUG Dual - Disease profile: {disease_profile.display_name} ({disease_profile.name}) for diagnosis='{diagnosis}'")
+    print(f"[DEBUG] TUG - Disease profile: {disease_profile.display_name} ({disease_profile.name}) for diagnosis='{diagnosis}'")
 
     save_analysis_status(file_id, {
         "status": "processing",
@@ -611,7 +583,7 @@ def run_tug_dual_analysis_sync(
     save_analysis_status(file_id, {
         "status": "processing",
         "progress": 10,
-        "message": "측면 영상 분석 중 (보행 + 기립/착석)...",
+        "message": "측면 영상 분석 중 (보행 + 기립/착석 + 관절각도)...",
         "current_frame": None,
         "current_phase": None,
         "current_phase_label": None
@@ -626,13 +598,10 @@ def run_tug_dual_analysis_sync(
 
     def update_progress(progress: int):
         current_status["progress"] = progress
-        if progress < 50:
-            current_status["message"] = "측면 영상 분석 중 (보행 + 기립/착석)..."
-        elif progress < 90:
-            current_status["message"] = "정면 영상 분석 중 (기울기)..."
+        if progress < 90:
+            current_status["message"] = "측면 영상 분석 중 (보행 + 기립/착석 + 관절각도)..."
         else:
-            current_status["message"] = "분석 결과 통합 중..."
-        # 매번 파일에 저장 (디버깅용)
+            current_status["message"] = "분석 결과 정리 중..."
         save_analysis_status(file_id, {
             "status": "processing",
             "progress": progress,
@@ -645,39 +614,37 @@ def run_tug_dual_analysis_sync(
     def update_phase(phase_info: dict):
         current_status["current_phase"] = phase_info.get("phase")
         current_status["current_phase_label"] = phase_info.get("phase_label")
-        print(f"[TUG DUAL PHASE] {phase_info.get('phase_label')} at {phase_info.get('time', 0):.2f}s")
+        print(f"[TUG PHASE] {phase_info.get('phase_label')} at {phase_info.get('time', 0):.2f}s")
 
     result = analyzer.analyze_dual_video(
         side_video_path,
-        front_video_path,
+        None,
         patient_height_cm,
         progress_callback=update_progress,
         phase_callback=update_phase,
         file_id=file_id
     )
 
-    print(f"[DEBUG] TUG dual video analysis complete.")
+    print(f"[DEBUG] TUG video analysis complete.")
     return result
 
 
-async def analyze_tug_dual_video_task(
+async def analyze_tug_video_task(
     file_id: str,
     side_video_path: str,
-    front_video_path: str,
     patient_id: str,
     patient_height_cm: float,
     diagnosis: str = None
 ):
-    """백그라운드 TUG 두 영상 분석 작업"""
+    """백그라운드 TUG 측면 영상 분석 작업"""
     _set_main_loop()
     try:
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             analysis_executor,
-            run_tug_dual_analysis_sync,
+            run_tug_analysis_sync,
             file_id,
             side_video_path,
-            front_video_path,
             patient_height_cm,
             diagnosis
         )
@@ -689,16 +656,13 @@ async def analyze_tug_dual_video_task(
             "current_frame": None
         })
 
-        # 정면 원본 영상 파일명 저장
-        result["front_video_filename"] = os.path.basename(front_video_path)
-
         # 결과를 DB에 저장
         test_data = {
             "patient_id": patient_id,
             "test_type": "TUG",
             "walk_time_seconds": result["walk_time_seconds"],
             "walk_speed_mps": result["walk_speed_mps"],
-            "video_url": f"/uploads/{os.path.basename(side_video_path)}",  # 측면 영상 URL
+            "video_url": f"/uploads/{os.path.basename(side_video_path)}",
             "analysis_data": json.dumps(result)
         }
 
@@ -724,7 +688,7 @@ async def analyze_tug_dual_video_task(
             "progress": 0,
             "message": f"TUG 분석 중 오류 발생: {str(e)}"
         })
-        print(f"[ERROR] TUG dual video analysis failed: {e}")
+        print(f"[ERROR] TUG video analysis failed: {e}")
 
 
 @router.get("/patient/{patient_id}", response_model=List[WalkTestResponse])
@@ -2086,6 +2050,114 @@ async def get_comparison_report(
     return generate_comparison_report(current_test, previous_test, patient, goal)
 
 
+# ===== TUG 단계별 비교 =====
+
+@router.get("/patient/{patient_id}/tug-phase-comparison")
+async def get_tug_phase_comparison(
+    patient_id: str,
+    test_id: Optional[str] = Query(None),
+    prev_id: Optional[str] = Query(None)
+):
+    """TUG 검사 단계별 전환 시점 비교 데이터"""
+    patient = db.get_patient(patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="환자를 찾을 수 없습니다.")
+
+    all_tug_tests = db.get_patient_tests(patient_id, test_type='TUG')
+    if not all_tug_tests:
+        raise HTTPException(status_code=404, detail="TUG 검사 기록이 없습니다.")
+
+    parsed_tests = [parse_analysis_data(t) for t in all_tug_tests]
+
+    # 현재/이전 테스트 선택
+    if test_id:
+        current_test = next((t for t in parsed_tests if t['id'] == test_id), None)
+        if not current_test:
+            raise HTTPException(status_code=404, detail="지정한 검사를 찾을 수 없습니다.")
+    else:
+        current_test = parsed_tests[0]
+
+    previous_test = None
+    if prev_id:
+        previous_test = next((t for t in parsed_tests if t['id'] == prev_id), None)
+    elif len(parsed_tests) >= 2:
+        for t in parsed_tests:
+            if t['id'] != current_test['id']:
+                previous_test = t
+                break
+
+    def extract_test_summary(test):
+        ad = test.get('analysis_data') or {}
+        phases = ad.get('phases', {})
+        stand_up = ad.get('stand_up')
+        sit_down = ad.get('sit_down')
+        rt = ad.get('reaction_time')
+        fs = ad.get('first_step_time')
+        return {
+            "id": test['id'],
+            "test_date": test.get('test_date', ''),
+            "total_time": ad.get('total_time_seconds') or test.get('walk_time_seconds', 0),
+            "assessment": ad.get('assessment', ''),
+            "phases": phases,
+            "stand_up_metrics": {
+                "duration": stand_up.get('duration', 0),
+                "assessment": stand_up.get('assessment', ''),
+                "used_hand_support": stand_up.get('used_hand_support', False)
+            } if stand_up else None,
+            "sit_down_metrics": {
+                "duration": sit_down.get('duration', 0),
+                "assessment": sit_down.get('assessment', ''),
+                "used_hand_support": sit_down.get('used_hand_support', False)
+            } if sit_down else None,
+            "reaction_time": rt.get('reaction_time') if isinstance(rt, dict) else rt,
+            "first_step_time": fs.get('time_to_first_step') if isinstance(fs, dict) else fs,
+        }
+
+    current_summary = extract_test_summary(current_test)
+    prev_summary = extract_test_summary(previous_test) if previous_test else None
+
+    # 단계별 delta 계산
+    phase_deltas = None
+    total_time_diff = None
+    total_time_pct = None
+    if prev_summary:
+        phase_names = ['stand_up', 'walk_out', 'turn', 'walk_back', 'sit_down']
+        phase_deltas = {}
+        for p in phase_names:
+            cur_dur = current_summary['phases'].get(p, {}).get('duration')
+            prev_dur = prev_summary['phases'].get(p, {}).get('duration')
+            if cur_dur is not None and prev_dur is not None and prev_dur > 0:
+                diff = cur_dur - prev_dur
+                pct = (diff / prev_dur) * 100
+                phase_deltas[p] = {"duration_diff": round(diff, 3), "pct_change": round(pct, 1)}
+            else:
+                phase_deltas[p] = {"duration_diff": None, "pct_change": None}
+
+        cur_total = current_summary['total_time']
+        prev_total = prev_summary['total_time']
+        if cur_total and prev_total and prev_total > 0:
+            total_time_diff = round(cur_total - prev_total, 3)
+            total_time_pct = round((total_time_diff / prev_total) * 100, 1)
+
+    available = []
+    for t in parsed_tests:
+        ad = t.get('analysis_data') or {}
+        available.append({
+            "id": t['id'],
+            "test_date": t.get('test_date', ''),
+            "total_time": ad.get('total_time_seconds') or t.get('walk_time_seconds', 0)
+        })
+
+    return {
+        "current_test": current_summary,
+        "previous_test": prev_summary,
+        "phase_deltas": phase_deltas,
+        "total_time_diff": total_time_diff,
+        "total_time_pct_change": total_time_pct,
+        "available_tug_tests": available
+    }
+
+
 # ===== 보행 영상 하이라이트 클립 =====
 
 @router.get("/{test_id}/video/walking-clip")
@@ -2137,10 +2209,22 @@ async def get_comparison_video(
         raise HTTPException(status_code=404, detail="검사를 찾을 수 없습니다.")
 
     def _get_video_times(test):
-        analysis = parse_analysis_data(test.get('analysis_data'))
+        parsed = parse_analysis_data(test)
+        analysis = parsed.get('analysis_data') or {}
         video_path = os.path.join(UPLOAD_DIR, os.path.basename(test['video_url']))
-        start = analysis.get('walk_start_time', 0)
-        end = analysis.get('walk_end_time', 10)
+
+        # TUG: phases 전체 구간 사용, 10MWT: walk_start/end_time 사용
+        test_type = parsed.get('test_type', '10MWT')
+        if test_type == 'TUG' and 'phases' in analysis:
+            phases = analysis['phases']
+            phase_order = ['stand_up', 'walk_out', 'turn', 'walk_back', 'sit_down']
+            start = min(phases.get(p, {}).get('start_time', 999) for p in phase_order)
+            end = max(phases.get(p, {}).get('end_time', 0) for p in phase_order)
+            if start >= end:
+                start, end = 0, analysis.get('total_time_seconds', 10)
+        else:
+            start = analysis.get('walk_start_time', 0)
+            end = analysis.get('walk_end_time', 10)
         return video_path, start, end
 
     v1_path, s1, e1 = _get_video_times(test1)
@@ -2149,12 +2233,23 @@ async def get_comparison_video(
     if not os.path.exists(v1_path) or not os.path.exists(v2_path):
         raise HTTPException(status_code=404, detail="영상 파일을 찾을 수 없습니다.")
 
+    # 라벨: 검사 날짜 (OpenCV putText가 한글 미지원이므로 날짜 사용)
+    def _fmt_date(test):
+        d = test.get('test_date', '')
+        try:
+            return datetime.fromisoformat(d).strftime('%Y-%m-%d')
+        except Exception:
+            return d[:10] if len(d) >= 10 else 'Test'
+
+    label1 = _fmt_date(test1)
+    label2 = _fmt_date(test2)
+
     # 캐싱
     comp_filename = f"comparison_{test1_id[:8]}_{test2_id[:8]}.mp4"
     comp_path = os.path.join(UPLOAD_DIR, comp_filename)
 
     if not os.path.exists(comp_path):
         from app.services.video_clip_generator import generate_side_by_side_clip
-        generate_side_by_side_clip(v1_path, s1, e1, v2_path, s2, e2, comp_path)
+        generate_side_by_side_clip(v1_path, s1, e1, v2_path, s2, e2, comp_path, labels=(label1, label2))
 
     return FileResponse(comp_path, media_type="video/mp4", filename=comp_filename)

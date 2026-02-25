@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Patient, PatientCreate, WalkTest, AnalysisStatus, ComparisonResult, User, Therapist, VideoInfo, TestType, BBSItemScores, PatientStats, PatientTag, PatientGoal, GoalProgress, ComparisonReportData, AdminDashboardStats, RecommendationsResponse, TrendAnalysisResponse, Site, SiteStats, EMRStatus, ClinicalNormativeResponse, ClinicalTrendsResponse, ClinicalCorrelationsResponse } from '../types';
+import type { Patient, PatientCreate, WalkTest, AnalysisStatus, ComparisonResult, User, Therapist, VideoInfo, TestType, BBSItemScores, PatientStats, PatientTag, PatientGoal, GoalProgress, ComparisonReportData, AdminDashboardStats, RecommendationsResponse, TrendAnalysisResponse, Site, SiteStats, EMRStatus, ClinicalNormativeResponse, ClinicalTrendsResponse, ClinicalCorrelationsResponse, TUGPhaseComparisonResponse } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -252,16 +252,14 @@ export const testApi = {
     return response.data;
   },
 
-  // TUG 검사용 두 영상 업로드
+  // TUG 검사용 측면 영상 업로드
   uploadTUG: async (
     patientId: string,
     sideVideo: File,
-    frontVideo: File,
     onProgress?: (progress: number) => void
   ): Promise<{ file_id: string; status_endpoint: string }> => {
     const formData = new FormData();
     formData.append('side_video', sideVideo);
-    formData.append('front_video', frontVideo);
 
     const response = await api.post(`/api/tests/${patientId}/upload-tug`, formData, {
       headers: {
@@ -381,6 +379,15 @@ export const testApi = {
     if (testId) params.set('test_id', testId);
     if (prevId) params.set('prev_id', prevId);
     const response = await api.get(`/api/tests/patient/${patientId}/comparison-report?${params}`);
+    return response.data;
+  },
+
+  // TUG 단계별 비교
+  getTUGPhaseComparison: async (patientId: string, testId?: string, prevId?: string): Promise<TUGPhaseComparisonResponse> => {
+    const params = new URLSearchParams();
+    if (testId) params.set('test_id', testId);
+    if (prevId) params.set('prev_id', prevId);
+    const response = await api.get(`/api/tests/patient/${patientId}/tug-phase-comparison?${params}`);
     return response.data;
   },
 

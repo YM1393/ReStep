@@ -219,11 +219,11 @@ class TUGAnalyzer:
         file_id: str = None
     ) -> Dict:
         """
-        두 영상으로 TUG 검사 분석 (측면 + 정면)
+        TUG 검사 분석 (측면 영상 기반, 정면 영상은 선택적)
 
         Args:
             side_video_path: 측면 영상 경로 (보행 분석, 기립/착석 속도)
-            front_video_path: 정면 영상 경로 (어깨/골반 기울기)
+            front_video_path: 정면 영상 경로 (None이면 측면만 분석)
             patient_height_cm: 환자의 실제 키 (cm)
             progress_callback: 진행률 콜백 함수
             frame_callback: 프레임 콜백 함수
@@ -233,15 +233,14 @@ class TUGAnalyzer:
         Returns:
             분석 결과 딕셔너리
         """
-        # 진행률 직접 상태 파일에 기록 (tests.py의 update_progress가 동작하지 않는 문제 우회)
+        # 진행률 직접 상태 파일에 기록
         import json as _json
         import os as _os
         import glob as _glob
 
         _status_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'uploads', 'status')
-        _resolved_fid = [file_id]  # file_id가 전달되면 사용, 아니면 자동 탐색
+        _resolved_fid = [file_id]
 
-        # file_id가 없으면 상태 디렉토리에서 현재 processing 중인 파일을 찾음
         if not _resolved_fid[0]:
             try:
                 candidates = sorted(
@@ -258,10 +257,15 @@ class TUGAnalyzer:
             except Exception as e:
                 print(f"[TUG] file_id auto-detect failed: {e}")
 
+        has_front = front_video_path is not None
+
         def _direct_progress(progress):
             fid = _resolved_fid[0]
             if fid:
-                msg = "측면 영상 분석 중..." if progress < 50 else ("정면 영상 분석 중..." if progress < 90 else "결과 통합 중...")
+                if has_front:
+                    msg = "측면 영상 분석 중..." if progress < 50 else ("정면 영상 분석 중..." if progress < 90 else "결과 통합 중...")
+                else:
+                    msg = "측면 영상 분석 중..." if progress < 90 else "결과 정리 중..."
                 try:
                     with open(_os.path.join(_status_dir, f'{fid}.json'), 'w', encoding='utf-8') as f:
                         _json.dump({"status": "processing", "progress": progress, "message": msg, "current_frame": None}, f, ensure_ascii=False)
@@ -273,31 +277,44 @@ class TUGAnalyzer:
                 except:
                     pass
 
-        # 1. 측면 영상 분석 (보행 + 기립/착석)
-        _direct_progress(5)
-        side_result = self._analyze_side_video(
-            side_video_path,
-            patient_height_cm,
-            progress_callback=lambda p: _direct_progress(5 + int(p * 0.45)),
-            frame_callback=frame_callback,
-            phase_callback=phase_callback,
-            save_overlay_video=save_overlay_video
-        )
+        if has_front:
+            # 측면 + 정면 양쪽 분석 (레거시 호환)
+            _direct_progress(5)
+            side_result = self._analyze_side_video(
+                side_video_path,
+                patient_height_cm,
+                progress_callback=lambda p: _direct_progress(5 + int(p * 0.45)),
+                frame_callback=frame_callback,
+                phase_callback=phase_callback,
+                save_overlay_video=save_overlay_video
+            )
 
-        # 2. 정면 영상 분석 (기울기)
-        _direct_progress(55)
-        front_result = self._analyze_front_video(
-            front_video_path,
-            patient_height_cm,
-            progress_callback=lambda p: _direct_progress(55 + int(p * 0.35)),
-            frame_callback=frame_callback,
-            save_overlay_video=save_overlay_video,
-            phases=side_result.get('phases')
-        )
+            _direct_progress(55)
+            front_result = self._analyze_front_video(
+                front_video_path,
+                patient_height_cm,
+                progress_callback=lambda p: _direct_progress(55 + int(p * 0.35)),
+                frame_callback=frame_callback,
+                save_overlay_video=save_overlay_video,
+                phases=side_result.get('phases')
+            )
 
-        # 3. 결과 통합
-        _direct_progress(90)
-        return self._merge_results(side_result, front_result, patient_height_cm)
+            _direct_progress(90)
+            return self._merge_results(side_result, front_result, patient_height_cm)
+        else:
+            # 측면만 분석 (정면 없음)
+            _direct_progress(5)
+            side_result = self._analyze_side_video(
+                side_video_path,
+                patient_height_cm,
+                progress_callback=lambda p: _direct_progress(5 + int(p * 0.85)),
+                frame_callback=frame_callback,
+                phase_callback=phase_callback,
+                save_overlay_video=save_overlay_video
+            )
+
+            _direct_progress(90)
+            return self._merge_results(side_result, {}, patient_height_cm)
 
     def _analyze_side_video(
         self,
@@ -1367,30 +1384,27 @@ class TUGAnalyzer:
         return annotated
 
     def _merge_results(self, side_result: Dict, front_result: Dict, patient_height_cm: float) -> Dict:
-        """측면 분석 결과와 정면 분석 결과 통합"""
+        """측면 분석 결과와 정면 분석 결과 통합 (정면이 빈 dict이면 측면만 사용)"""
         total_time = side_result['total_time_seconds']
-
-        # 보행 패턴 평가
-        tilt_assessment = self._get_tilt_assessment(front_result)
+        has_front = bool(front_result and front_result.get('shoulder_tilt_avg') is not None)
 
         # 오버레이 영상 경로 (파일명만 추출)
         side_overlay_path = side_result.get('overlay_video_path')
         side_overlay_filename = os.path.basename(side_overlay_path) if side_overlay_path else None
 
-        front_overlay_path = front_result.get('overlay_video_path')
+        front_overlay_path = front_result.get('overlay_video_path') if has_front else None
         front_overlay_filename = os.path.basename(front_overlay_path) if front_overlay_path else None
 
-        return {
+        result = {
             "test_type": "TUG",
             "total_time_seconds": round(total_time, 2),
             "walk_time_seconds": round(total_time, 2),
             "walk_speed_mps": 0,
             "assessment": side_result['assessment'],
 
-            # 포즈 오버레이 영상 경로 (측면/정면)
-            "overlay_video_filename": side_overlay_filename,  # 기존 호환성
+            # 포즈 오버레이 영상 경로
+            "overlay_video_filename": side_overlay_filename,
             "side_overlay_video_filename": side_overlay_filename,
-            "front_overlay_video_filename": front_overlay_filename,
 
             # 기립/착석 분석 (측면 영상)
             "stand_up": side_result['stand_up'],
@@ -1401,23 +1415,6 @@ class TUGAnalyzer:
 
             # 첫 걸음 시간 (파킨슨 지표)
             "first_step_time": side_result.get('first_step_time', {}),
-
-            # 기울기 분석 (정면 영상)
-            "tilt_analysis": {
-                "shoulder_tilt_avg": front_result['shoulder_tilt_avg'],
-                "shoulder_tilt_max": front_result['shoulder_tilt_max'],
-                "shoulder_tilt_direction": front_result['shoulder_tilt_direction'],
-                "hip_tilt_avg": front_result['hip_tilt_avg'],
-                "hip_tilt_max": front_result['hip_tilt_max'],
-                "hip_tilt_direction": front_result['hip_tilt_direction'],
-                "assessment": tilt_assessment
-            },
-
-            # 체중이동 분석 (정면 영상)
-            "weight_shift": front_result.get('weight_shift', {}),
-
-            # 자세 편향 캡처 (정면 영상)
-            "deviation_captures": front_result.get('deviation_captures', []),
 
             # 단계별 시간
             "phases": {
@@ -1457,25 +1454,25 @@ class TUGAnalyzer:
             "patient_height_cm": patient_height_cm,
             "model": self.model_name,
 
-            # 기울기 그래프 데이터 (정면 영상)
-            "angle_data": front_result.get('angle_data', []),
+            # 측면 관절 각도 시계열 (무릎/골반)
+            "side_angle_data": [
+                {
+                    "time": f["time"],
+                    "knee_angle": f.get("leg_angle", 0),
+                    "left_knee_angle": f.get("left_knee_angle", 0),
+                    "right_knee_angle": f.get("right_knee_angle", 0),
+                    "hip_angle": (f.get("left_hip_angle", 0) + f.get("right_hip_angle", 0)) / 2,
+                    "left_hip_angle": f.get("left_hip_angle", 0),
+                    "right_hip_angle": f.get("right_hip_angle", 0),
+                }
+                for f in side_result.get("frame_data", [])
+            ],
 
             # 단계 감지 신뢰도
             "phase_confidence": side_result['phases'].get('phase_confidence', {}),
 
             # 단계별 클립
             "phase_clips": side_result.get('phase_clips', {}),
-
-            # 기존 gait_pattern 필드 유지 (호환성)
-            "gait_pattern": {
-                "shoulder_tilt_avg": front_result['shoulder_tilt_avg'],
-                "shoulder_tilt_max": front_result['shoulder_tilt_max'],
-                "shoulder_tilt_direction": front_result['shoulder_tilt_direction'],
-                "hip_tilt_avg": front_result['hip_tilt_avg'],
-                "hip_tilt_max": front_result['hip_tilt_max'],
-                "hip_tilt_direction": front_result['hip_tilt_direction'],
-                "assessment": tilt_assessment
-            },
 
             # 질환별 프로파일 정보
             "disease_profile": self._disease_profile.name if self._disease_profile else "default",
@@ -1484,18 +1481,44 @@ class TUGAnalyzer:
             # 질환별 추가 임상 변수
             "clinical_variables": side_result.get('clinical_variables', {}),
 
-            # 3D 포즈 데이터 (측면 영상 - 전체 TUG 시퀀스)
+            # 3D 포즈 데이터 (측면 영상)
             "pose_3d_frames": self._annotate_3d_frames_with_phases(
                 side_result.get('pose_3d_frames', []),
                 side_result.get('phases', {})
             ) or None,
+        }
 
-            # 3D 포즈 데이터 (정면 영상 - 보조)
-            "pose_3d_frames_front": self._annotate_3d_frames_with_phases(
+        # 정면 영상이 있는 경우에만 정면 관련 데이터 추가
+        if has_front:
+            tilt_assessment = self._get_tilt_assessment(front_result)
+            result["front_overlay_video_filename"] = front_overlay_filename
+            result["tilt_analysis"] = {
+                "shoulder_tilt_avg": front_result['shoulder_tilt_avg'],
+                "shoulder_tilt_max": front_result['shoulder_tilt_max'],
+                "shoulder_tilt_direction": front_result['shoulder_tilt_direction'],
+                "hip_tilt_avg": front_result['hip_tilt_avg'],
+                "hip_tilt_max": front_result['hip_tilt_max'],
+                "hip_tilt_direction": front_result['hip_tilt_direction'],
+                "assessment": tilt_assessment
+            }
+            result["weight_shift"] = front_result.get('weight_shift', {})
+            result["deviation_captures"] = front_result.get('deviation_captures', [])
+            result["angle_data"] = front_result.get('angle_data', [])
+            result["gait_pattern"] = {
+                "shoulder_tilt_avg": front_result['shoulder_tilt_avg'],
+                "shoulder_tilt_max": front_result['shoulder_tilt_max'],
+                "shoulder_tilt_direction": front_result['shoulder_tilt_direction'],
+                "hip_tilt_avg": front_result['hip_tilt_avg'],
+                "hip_tilt_max": front_result['hip_tilt_max'],
+                "hip_tilt_direction": front_result['hip_tilt_direction'],
+                "assessment": tilt_assessment
+            }
+            result["pose_3d_frames_front"] = self._annotate_3d_frames_with_phases(
                 front_result.get('pose_3d_frames', []),
                 side_result.get('phases', {})
-            ) or None,
-        }
+            ) or None
+
+        return result
 
     def _get_tilt_assessment(self, front_result: Dict) -> str:
         """기울기 분석 종합 평가"""

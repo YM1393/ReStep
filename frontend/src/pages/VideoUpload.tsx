@@ -11,17 +11,14 @@ export default function VideoUpload() {
   const { id } = useParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sideVideoInputRef = useRef<HTMLInputElement>(null);
-  const frontVideoInputRef = useRef<HTMLInputElement>(null);
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  // TUG 두 영상용 상태
+  // TUG 측면 영상 상태
   const [sideVideo, setSideVideo] = useState<File | null>(null);
-  const [frontVideo, setFrontVideo] = useState<File | null>(null);
   const [sideDragActive, setSideDragActive] = useState(false);
-  const [frontDragActive, setFrontDragActive] = useState(false);
 
   const [uploadProgress, setUploadProgress] = useState(0);
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -280,42 +277,6 @@ export default function VideoUpload() {
     setError(null);
   };
 
-  // TUG 정면 영상 드래그 핸들러
-  const handleFrontDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setFrontDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setFrontDragActive(false);
-    }
-  };
-
-  const handleFrontDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setFrontDragActive(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFrontVideo(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleFrontVideoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleFrontVideo(e.target.files[0]);
-    }
-  };
-
-  const handleFrontVideo = (selectedFile: File) => {
-    if (!selectedFile.type.startsWith('video/')) {
-      setError('동영상 파일만 업로드 가능합니다.');
-      return;
-    }
-    setFrontVideo(selectedFile);
-    setError(null);
-  };
-
   // BBS 영상 드래그 핸들러
   const handleBbsDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -379,10 +340,10 @@ export default function VideoUpload() {
   };
 
   const handleUpload = async () => {
-    // TUG 검사인 경우 두 영상 모두 필요
+    // TUG 검사인 경우 측면 영상 필요
     if (testType === 'TUG') {
-      if (!sideVideo || !frontVideo || !id) {
-        setError('TUG 검사를 위해 측면 영상과 정면 영상이 모두 필요합니다.');
+      if (!sideVideo || !id) {
+        setError('TUG 검사를 위해 측면 영상이 필요합니다.');
         return;
       }
     } else {
@@ -398,8 +359,8 @@ export default function VideoUpload() {
       let file_id: string;
 
       if (testType === 'TUG') {
-        // TUG 두 영상 업로드
-        const response = await testApi.uploadTUG(id, sideVideo!, frontVideo!, (progress) => {
+        // TUG 측면 영상 업로드
+        const response = await testApi.uploadTUG(id, sideVideo!, (progress) => {
           setUploadProgress(progress);
         });
         file_id = response.file_id;
@@ -427,7 +388,6 @@ export default function VideoUpload() {
     activeFileIdRef.current = null;  // Stop WS/polling monitoring
     setFile(null);
     setSideVideo(null);
-    setFrontVideo(null);
     setBbsVideo(null);
     setBbsAIScores(undefined);
     setBbsMode('manual');
@@ -443,9 +403,6 @@ export default function VideoUpload() {
     }
     if (sideVideoInputRef.current) {
       sideVideoInputRef.current.value = '';
-    }
-    if (frontVideoInputRef.current) {
-      frontVideoInputRef.current.value = '';
     }
     if (bbsVideoInputRef.current) {
       bbsVideoInputRef.current.value = '';
@@ -532,7 +489,7 @@ export default function VideoUpload() {
       </div>
 
       {/* 검사 유형 선택 (파일 선택 전) */}
-      {status === 'idle' && !file && !sideVideo && !frontVideo && (
+      {status === 'idle' && !file && !sideVideo && (
         <div className="card mb-4">
           <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">검사 유형 선택</p>
           <div className="grid grid-cols-3 gap-3">
@@ -565,7 +522,7 @@ export default function VideoUpload() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span className="text-sm font-medium">TUG</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">영상 2개</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">영상 1개</span>
               </div>
             </button>
             <button
@@ -633,13 +590,13 @@ export default function VideoUpload() {
         </div>
       )}
 
-      {/* TUG 업로드 영역 (두 영상) */}
+      {/* TUG 업로드 영역 (측면 영상 1개) */}
       {status === 'idle' && testType === 'TUG' && (
         <div className="space-y-4">
           {/* 측면 영상 업로드 */}
           <div
             className={`card border-2 border-dashed transition-all duration-200 ${
-              sideDragActive ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : sideVideo ? 'border-purple-300 bg-purple-50 dark:bg-purple-900/10' : 'border-gray-200 dark:border-gray-600'
+              sideDragActive ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : sideVideo ? 'border-green-300 bg-green-50 dark:bg-green-900/10' : 'border-gray-200 dark:border-gray-600'
             }`}
             onDragEnter={handleSideDrag}
             onDragLeave={handleSideDrag}
@@ -647,7 +604,7 @@ export default function VideoUpload() {
             onDrop={handleSideDrop}
           >
             <div className="flex items-center mb-3">
-              <div className="w-8 h-8 bg-purple-500 rounded-lg flex items-center justify-center mr-3">
+              <div className="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center mr-3">
                 <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -655,14 +612,14 @@ export default function VideoUpload() {
               </div>
               <div>
                 <h4 className="font-semibold text-gray-800 dark:text-gray-100">측면 영상</h4>
-                <p className="text-xs text-gray-500 dark:text-gray-400">보행 분석 및 기립/착석 속도 측정용</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">보행 분석, 기립/착석 속도, 관절각도 측정용</p>
               </div>
             </div>
 
             {sideVideo ? (
               <div className="flex items-center justify-between bg-white dark:bg-gray-700 rounded-xl p-3">
                 <div className="flex items-center">
-                  <svg className="w-5 h-5 text-purple-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{sideVideo.name}</span>
@@ -675,7 +632,7 @@ export default function VideoUpload() {
                 </button>
               </div>
             ) : (
-              <div className="text-center py-4">
+              <div className="text-center py-6">
                 <input
                   ref={sideVideoInputRef}
                   type="file"
@@ -686,79 +643,22 @@ export default function VideoUpload() {
                 />
                 <label
                   htmlFor="side-video-upload"
-                  className="inline-flex items-center px-4 py-2 bg-purple-500 text-white rounded-lg cursor-pointer hover:bg-purple-600 transition-colors"
+                  className="inline-flex items-center px-4 py-2 bg-green-500 text-white rounded-lg cursor-pointer hover:bg-green-600 transition-colors"
                 >
                   <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
                   측면 영상 선택
                 </label>
-              </div>
-            )}
-          </div>
-
-          {/* 정면 영상 업로드 */}
-          <div
-            className={`card border-2 border-dashed transition-all duration-200 ${
-              frontDragActive ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/20' : frontVideo ? 'border-teal-300 bg-teal-50 dark:bg-teal-900/10' : 'border-gray-200 dark:border-gray-600'
-            }`}
-            onDragEnter={handleFrontDrag}
-            onDragLeave={handleFrontDrag}
-            onDragOver={handleFrontDrag}
-            onDrop={handleFrontDrop}
-          >
-            <div className="flex items-center mb-3">
-              <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center mr-3">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-              </div>
-              <div>
-                <h4 className="font-semibold text-gray-800 dark:text-gray-100">정면 영상</h4>
-                <p className="text-xs text-gray-500 dark:text-gray-400">어깨/골반 기울기 분석용</p>
-              </div>
-            </div>
-
-            {frontVideo ? (
-              <div className="flex items-center justify-between bg-white dark:bg-gray-700 rounded-xl p-3">
-                <div className="flex items-center">
-                  <svg className="w-5 h-5 text-teal-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{frontVideo.name}</span>
-                  <span className="text-xs text-gray-400 ml-2">({(frontVideo.size / 1024 / 1024).toFixed(2)} MB)</span>
-                </div>
-                <button onClick={() => setFrontVideo(null)} className="p-1 text-gray-400 hover:text-gray-600" aria-label="정면 영상 제거">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            ) : (
-              <div className="text-center py-4">
-                <input
-                  ref={frontVideoInputRef}
-                  type="file"
-                  accept="video/*"
-                  onChange={handleFrontVideoSelect}
-                  className="hidden"
-                  id="front-video-upload"
-                />
-                <label
-                  htmlFor="front-video-upload"
-                  className="inline-flex items-center px-4 py-2 bg-teal-500 text-white rounded-lg cursor-pointer hover:bg-teal-600 transition-colors"
-                >
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  정면 영상 선택
-                </label>
+                <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+                  지원 형식: MP4, AVI, MOV 등
+                </p>
               </div>
             )}
           </div>
 
           {/* TUG 분석 시작 버튼 */}
-          {sideVideo && frontVideo && (
+          {sideVideo && (
             <button onClick={handleUpload} className="w-full btn-primary">
               TUG 분석 시작
             </button>
@@ -1059,28 +959,16 @@ export default function VideoUpload() {
             </div>
 
             {/* 측면 영상 가이드 */}
-            <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-xl">
-              <p className="text-sm font-medium text-purple-700 dark:text-purple-300 mb-2 flex items-center">
-                <span className="w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center text-white text-xs mr-2">1</span>
+            <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
+              <p className="text-sm font-medium text-green-700 dark:text-green-300 mb-2 flex items-center">
+                <span className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-white text-xs mr-2">1</span>
                 측면 영상 촬영
               </p>
-              <ul className="text-sm text-purple-600 dark:text-purple-400 space-y-1 ml-7">
+              <ul className="text-sm text-green-600 dark:text-green-400 space-y-1 ml-7">
                 <li>• 환자의 측면에서 전체 동작이 보이도록 촬영</li>
                 <li>• 기립/착석 동작과 보행이 모두 포함되어야 함</li>
                 <li>• 엉덩이와 무릎의 움직임이 잘 보여야 함</li>
-              </ul>
-            </div>
-
-            {/* 정면 영상 가이드 */}
-            <div className="p-3 bg-teal-50 dark:bg-teal-900/20 rounded-xl">
-              <p className="text-sm font-medium text-teal-700 dark:text-teal-300 mb-2 flex items-center">
-                <span className="w-5 h-5 bg-teal-500 rounded-full flex items-center justify-center text-white text-xs mr-2">2</span>
-                정면 영상 촬영
-              </p>
-              <ul className="text-sm text-teal-600 dark:text-teal-400 space-y-1 ml-7">
-                <li>• 환자의 정면에서 어깨와 골반이 보이도록 촬영</li>
-                <li>• 보행 중 좌우 기울기 분석에 사용됨</li>
-                <li>• 걷는 방향으로 카메라를 향하게 설정</li>
+                <li>• 의자, 보행 경로(3m), 회전 구간이 모두 화면 안에 포함</li>
               </ul>
             </div>
 
@@ -1106,17 +994,6 @@ export default function VideoUpload() {
             <li className="flex items-start">
               <span className="text-blue-500 mr-2">•</span>
               밝은 조명 환경을 권장합니다
-            </li>
-            <li className="flex items-start">
-              <span className="text-green-500 mr-2">•</span>
-              <span>
-                START/FINISH 마커를 2m/12m 지점에 배치하면 정확도가 향상됩니다.{' '}
-                <a href="/api/tests/aruco/markers/pdf"
-                   className="text-blue-600 dark:text-blue-400 underline font-medium hover:text-blue-800 dark:hover:text-blue-300"
-                   download>
-                  마커 PDF 다운로드
-                </a>
-              </span>
             </li>
           </ul>
         )}

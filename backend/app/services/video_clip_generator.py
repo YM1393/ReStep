@@ -1,7 +1,31 @@
 """보행 영상 하이라이트 클립 생성 서비스"""
 import os
+import subprocess
 import cv2
 import numpy as np
+
+
+def _remux_to_h264(input_path: str) -> None:
+    """mp4v 코덱 파일을 브라우저 호환 H.264로 변환 (in-place)"""
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return  # ffmpeg 없으면 원본 유지
+
+    tmp_path = input_path + ".tmp.mp4"
+    try:
+        subprocess.run([
+            ffmpeg_exe, "-y", "-i", input_path,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            "-an", tmp_path
+        ], capture_output=True, timeout=120)
+        if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+            os.replace(tmp_path, input_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 def extract_walking_clip(
@@ -38,6 +62,7 @@ def extract_walking_clip(
 
     cap.release()
     writer.release()
+    _remux_to_h264(output_path)
     return output_path
 
 
@@ -138,13 +163,18 @@ def generate_side_by_side_clip(
     cap1.release()
     cap2.release()
     writer.release()
+    _remux_to_h264(output_path)
     return output_path
 
 
 def _add_label(frame: np.ndarray, text: str):
     """프레임에 라벨 텍스트 추가"""
-    h, w = frame.shape[:2]
-    # 배경 박스
-    cv2.rectangle(frame, (10, 10), (140, 50), (0, 0, 0), -1)
-    cv2.rectangle(frame, (10, 10), (140, 50), (255, 255, 255), 1)
-    cv2.putText(frame, text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.8
+    thickness = 2
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+    pad = 10
+    x, y = 10, 10
+    cv2.rectangle(frame, (x, y), (x + tw + pad * 2, y + th + baseline + pad * 2), (0, 0, 0), -1)
+    cv2.rectangle(frame, (x, y), (x + tw + pad * 2, y + th + baseline + pad * 2), (255, 255, 255), 1)
+    cv2.putText(frame, text, (x + pad, y + pad + th), font, scale, (255, 255, 255), thickness)

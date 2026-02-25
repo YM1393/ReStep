@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import type { PhaseFrames, PhaseClips } from '../types';
 import { testApi } from '../services/api';
 
@@ -6,6 +6,11 @@ interface TUGPhaseFramesProps {
   phaseFrames: PhaseFrames;
   phaseClips?: PhaseClips;
   testId?: string;
+  testDate?: string;
+  prevPhaseFrames?: PhaseFrames;
+  prevPhaseClips?: PhaseClips;
+  prevTestId?: string;
+  prevTestDate?: string;
 }
 
 const phaseOrder: (keyof PhaseFrames)[] = ['stand_up', 'walk_out', 'turn', 'walk_back', 'sit_down'];
@@ -18,9 +23,22 @@ const phaseColors: Record<string, { bg: string; border: string; text: string; li
   sit_down: { bg: 'bg-pink-500', border: 'border-pink-500', text: 'text-pink-600', light: 'bg-pink-50 dark:bg-pink-900/20' }
 };
 
-export default function TUGPhaseFrames({ phaseFrames, phaseClips, testId }: TUGPhaseFramesProps) {
+export default function TUGPhaseFrames({ phaseFrames, phaseClips, testId, testDate, prevPhaseFrames, prevPhaseClips, prevTestId, prevTestDate }: TUGPhaseFramesProps) {
   const [selectedPhase, setSelectedPhase] = useState<keyof PhaseFrames | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const hasPrevious = !!(prevPhaseFrames || prevPhaseClips);
+
+  // 비교 모드 영상 동기 재생
+  const cmpVid1Ref = useRef<HTMLVideoElement>(null);
+  const cmpVid2Ref = useRef<HTMLVideoElement>(null);
+
+  const handleCmpEnded = useCallback(() => {
+    const v1 = cmpVid1Ref.current;
+    const v2 = cmpVid2Ref.current;
+    if (v1) { v1.currentTime = 0; v1.play(); }
+    if (v2) { v2.currentTime = 0; v2.play(); }
+  }, []);
 
   const openModal = (phase: keyof PhaseFrames) => {
     setSelectedPhase(phase);
@@ -136,10 +154,21 @@ export default function TUGPhaseFrames({ phaseFrames, phaseClips, testId }: TUGP
       </div>
 
       {/* 상세 모달 */}
-      {showModal && selectedFrame && selectedPhase && (
+      {showModal && selectedFrame && selectedPhase && (() => {
+        const prevFrame = prevPhaseFrames?.[selectedPhase];
+        const prevClip = prevPhaseClips?.[selectedPhase];
+        const hasPrevPhase = !!(prevFrame || prevClip);
+        const showCompare = compareMode && hasPrevPhase;
+        const formatDate = (d?: string) => {
+          if (!d) return '';
+          try { return new Date(d).toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' }); }
+          catch { return d.slice(0, 10); }
+        };
+
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={closeModal}>
           <div
-            className="bg-white dark:bg-gray-800 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+            className={`bg-white dark:bg-gray-800 rounded-2xl ${showCompare ? 'max-w-5xl' : 'max-w-3xl'} w-full max-h-[90vh] overflow-y-auto shadow-2xl`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* 모달 헤더 */}
@@ -158,47 +187,155 @@ export default function TUGPhaseFrames({ phaseFrames, phaseClips, testId }: TUGP
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={closeModal}
-                  className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* 비교 모드 토글 */}
+                  {hasPrevious && hasPrevPhase && (
+                    <button
+                      onClick={() => setCompareMode(!compareMode)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        compareMode
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-500'
+                      }`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" />
+                      </svg>
+                      {compareMode ? '비교 중' : '이전 비교'}
+                    </button>
+                  )}
+                  <button
+                    onClick={closeModal}
+                    className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
 
             {/* 모달 콘텐츠 */}
             <div className="p-4">
-              {/* 캡처 이미지 or 클립 영상 */}
-              <div className="relative rounded-xl overflow-hidden bg-black mb-4">
-                {phaseClips?.[selectedPhase]?.clip_filename && testId ? (
-                  <video
-                    src={testApi.getPhaseClipUrl(testId, selectedPhase)}
-                    className="w-full h-auto"
-                    controls
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                  />
-                ) : (
-                  <img
-                    src={`data:image/jpeg;base64,${selectedFrame.frame}`}
-                    alt={selectedFrame.label}
-                    className="w-full h-auto"
-                  />
-                )}
-                {/* 단계 오버레이 */}
-                <div className={`absolute top-4 left-4 px-3 py-1 ${phaseColors[selectedPhase].bg} rounded-lg shadow-lg`}>
-                  <span className="text-white font-bold">{selectedFrame.label}</span>
+              {/* 비교 모드: 좌우 나란히 */}
+              {showCompare ? (
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  {/* 현재 검사 */}
+                  <div>
+                    <div className="text-center mb-2">
+                      <span className="inline-block px-3 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-medium rounded-full">
+                        현재 {testDate ? `(${formatDate(testDate)})` : ''}
+                      </span>
+                    </div>
+                    <div className="relative rounded-xl overflow-hidden bg-black">
+                      {phaseClips?.[selectedPhase]?.clip_filename && testId ? (
+                        <video
+                          ref={cmpVid1Ref}
+                          src={testApi.getPhaseClipUrl(testId, selectedPhase)}
+                          className="w-full h-auto"
+                          autoPlay muted playsInline
+                          onEnded={handleCmpEnded}
+                        />
+                      ) : (
+                        <img
+                          src={`data:image/jpeg;base64,${selectedFrame.frame}`}
+                          alt={selectedFrame.label}
+                          className="w-full h-auto"
+                        />
+                      )}
+                      <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/70 rounded text-white text-xs">
+                        {selectedFrame.time}s / {selectedFrame.duration}s
+                      </div>
+                    </div>
+                  </div>
+                  {/* 이전 검사 */}
+                  <div>
+                    <div className="text-center mb-2">
+                      <span className="inline-block px-3 py-1 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-full">
+                        이전 {prevTestDate ? `(${formatDate(prevTestDate)})` : ''}
+                      </span>
+                    </div>
+                    <div className="relative rounded-xl overflow-hidden bg-black">
+                      {prevClip?.clip_filename && prevTestId ? (
+                        <video
+                          ref={cmpVid2Ref}
+                          src={testApi.getPhaseClipUrl(prevTestId, selectedPhase)}
+                          className="w-full h-auto"
+                          autoPlay muted playsInline
+                          onEnded={handleCmpEnded}
+                        />
+                      ) : prevFrame ? (
+                        <img
+                          src={`data:image/jpeg;base64,${prevFrame.frame}`}
+                          alt={prevFrame.label}
+                          className="w-full h-auto"
+                        />
+                      ) : (
+                        <div className="w-full aspect-video bg-gray-700 flex items-center justify-center">
+                          <span className="text-gray-400 text-sm">이전 캡처 없음</span>
+                        </div>
+                      )}
+                      {prevFrame && (
+                        <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/70 rounded text-white text-xs">
+                          {prevFrame.time}s / {prevFrame.duration}s
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                {/* 시간 오버레이 */}
-                <div className="absolute bottom-4 right-4 px-3 py-1 bg-black/70 rounded-lg">
-                  <span className="text-white text-sm">{selectedFrame.time}s</span>
+              ) : (
+                /* 단일 보기 (기존) */
+                <div className="relative rounded-xl overflow-hidden bg-black mb-4">
+                  {phaseClips?.[selectedPhase]?.clip_filename && testId ? (
+                    <video
+                      src={testApi.getPhaseClipUrl(testId, selectedPhase)}
+                      className="w-full h-auto"
+                      controls
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                    />
+                  ) : (
+                    <img
+                      src={`data:image/jpeg;base64,${selectedFrame.frame}`}
+                      alt={selectedFrame.label}
+                      className="w-full h-auto"
+                    />
+                  )}
+                  {/* 단계 오버레이 */}
+                  <div className={`absolute top-4 left-4 px-3 py-1 ${phaseColors[selectedPhase].bg} rounded-lg shadow-lg`}>
+                    <span className="text-white font-bold">{selectedFrame.label}</span>
+                  </div>
+                  {/* 시간 오버레이 */}
+                  <div className="absolute bottom-4 right-4 px-3 py-1 bg-black/70 rounded-lg">
+                    <span className="text-white text-sm">{selectedFrame.time}s</span>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* 비교 모드: 시간 차이 표시 */}
+              {showCompare && prevFrame && (
+                <div className={`p-3 rounded-xl ${phaseColors[selectedPhase].light} mb-4`}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className={`font-medium ${phaseColors[selectedPhase].text}`}>지속 시간 비교</span>
+                    <div className="flex items-center gap-4">
+                      <span className="text-gray-600 dark:text-gray-300">현재: <strong>{selectedFrame.duration}s</strong></span>
+                      <span className="text-gray-600 dark:text-gray-300">이전: <strong>{prevFrame.duration}s</strong></span>
+                      {(() => {
+                        const diff = selectedFrame.duration - prevFrame.duration;
+                        if (Math.abs(diff) < 0.01) return <span className="text-gray-400">변화 없음</span>;
+                        return (
+                          <span className={diff < 0 ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
+                            {diff < 0 ? '↓' : '↑'} {Math.abs(diff).toFixed(2)}s ({((diff / prevFrame.duration) * 100).toFixed(0)}%)
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* 감지 기준 */}
               <div className={`p-4 rounded-xl ${phaseColors[selectedPhase].light} mb-4`}>
@@ -262,7 +399,8 @@ export default function TUGPhaseFrames({ phaseFrames, phaseClips, testId }: TUGP
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

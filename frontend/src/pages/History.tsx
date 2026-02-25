@@ -14,7 +14,6 @@ const SpeedChart = lazy(() => import('../components/SpeedChart'));
 const FallRiskScore = lazy(() => import('../components/FallRiskScore'));
 const NotesAnalysisSummary = lazy(() => import('../components/NotesAnalysis'));
 const ComparisonReport = lazy(() => import('../components/ComparisonReport'));
-const VideoComparison = lazy(() => import('../components/VideoComparison'));
 const ConfidenceScoreComponent = lazy(() => import('../components/ConfidenceScore'));
 
 const ChartLoader = () => (
@@ -702,10 +701,6 @@ export default function History() {
             <ComparisonReport patientId={id} testId={filteredTests[0]?.id} prevId={filteredTests[1]?.id} currentTest={filteredTests[0]} previousTest={filteredTests[1]} />
           )}
 
-          {/* Video Comparison */}
-          {id && filteredTests.length >= 2 && (
-            <VideoComparison patientId={id} tests={filteredTests} />
-          )}
 
           {/* Notes Analysis */}
           {filteredTests.length > 0 && (
@@ -731,7 +726,14 @@ export default function History() {
 
           {/* TUG Result */}
           {filteredTests.length > 0 && selectedTestType === 'TUG' && filteredTests[0].test_type === 'TUG' && filteredTests[0].analysis_data && (
-            <TUGResult data={filteredTests[0].analysis_data as TUGAnalysisData} testId={filteredTests[0].id} />
+            <TUGResult
+              data={filteredTests[0].analysis_data as TUGAnalysisData}
+              testId={filteredTests[0].id}
+              testDate={filteredTests[0].test_date}
+              prevData={filteredTests.length > 1 && filteredTests[1].test_type === 'TUG' && filteredTests[1].analysis_data ? filteredTests[1].analysis_data as TUGAnalysisData : undefined}
+              prevTestId={filteredTests.length > 1 ? filteredTests[1].id : undefined}
+              prevTestDate={filteredTests.length > 1 ? filteredTests[1].test_date : undefined}
+            />
           )}
 
           {/* BBS Result */}

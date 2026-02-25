@@ -73,6 +73,16 @@ export interface AngleDataPoint {
   hip_tilt: number;
 }
 
+export interface SideAngleDataPoint {
+  time: number;
+  knee_angle: number;
+  left_knee_angle: number;
+  right_knee_angle: number;
+  hip_angle: number;
+  left_hip_angle: number;
+  right_hip_angle: number;
+}
+
 // 10MWT 임상 보행 변수
 export interface ClinicalCadence {
   value: number;
@@ -179,8 +189,7 @@ export interface AnalysisData {
   gait_pattern?: GaitPattern;
   angle_data?: AngleDataPoint[];
   overlay_video_filename?: string;  // 포즈 오버레이 영상 파일명
-  calibration_method?: 'aruco' | 'proportional';
-  aruco_markers_detected?: number;
+  calibration_method?: 'proportional';
   disease_profile?: string;
   disease_profile_display?: string;
   clinical_variables?: ClinicalVariables;
@@ -358,6 +367,7 @@ export interface TUGAnalysisData {
   // 기존 필드 (호환성)
   gait_pattern?: GaitPattern;
   angle_data?: AngleDataPoint[];
+  side_angle_data?: SideAngleDataPoint[];
 
   // 3D 포즈 데이터
   pose_3d_frames?: TUGPose3DFrame[];        // 측면 영상 (전체 TUG 시퀀스)
@@ -776,4 +786,26 @@ export interface TrendAnalysisResponse {
   goal_info?: { target_value?: number; weeks_remaining?: number; message?: string };
   value_label?: string;
   value_unit?: string;
+}
+
+// TUG 단계별 비교
+export interface TUGPhaseComparisonTestSummary {
+  id: string;
+  test_date: string;
+  total_time: number;
+  assessment: string;
+  phases: TUGPhases;
+  stand_up_metrics?: { duration: number; assessment: string; used_hand_support?: boolean };
+  sit_down_metrics?: { duration: number; assessment: string; used_hand_support?: boolean };
+  reaction_time?: number;
+  first_step_time?: number;
+}
+
+export interface TUGPhaseComparisonResponse {
+  current_test: TUGPhaseComparisonTestSummary;
+  previous_test: TUGPhaseComparisonTestSummary | null;
+  phase_deltas: Record<string, { duration_diff: number | null; pct_change: number | null }> | null;
+  total_time_diff: number | null;
+  total_time_pct_change: number | null;
+  available_tug_tests: Array<{ id: string; test_date: string; total_time: number }>;
 }

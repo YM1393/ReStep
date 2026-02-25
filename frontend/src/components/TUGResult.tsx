@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import type { TUGAnalysisData, TUGAssessment, PhaseFrames, PhaseClips } from '../types';
 import { testApi } from '../services/api';
-import TUGWeightShift from './TUGWeightShift';
 
 interface TUGResultProps {
   data: TUGAnalysisData;
   testId?: string;
+  testDate?: string;
+  prevData?: TUGAnalysisData;
+  prevTestId?: string;
+  prevTestDate?: string;
 }
 
 // 기립/착석 속도에 따른 색상
@@ -64,12 +67,31 @@ const phaseColors: Record<string, { bg: string; border: string; text: string; li
 
 const phaseOrder = ['stand_up', 'walk_out', 'turn', 'walk_back', 'sit_down'] as const;
 
-export default function TUGResult({ data, testId }: TUGResultProps) {
+export default function TUGResult({ data, testId, testDate, prevData, prevTestId, prevTestDate }: TUGResultProps) {
   const assessment = data.assessment;
   const colors = assessmentColors[assessment];
   const [hoveredPhase, setHoveredPhase] = useState<string | null>(null);
   const [selectedPhase, setSelectedPhase] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const hasPrevious = !!(prevData?.phase_frames || prevData?.phase_clips);
+
+  // 비교 모달 영상 동기 재생
+  const cmpVid1Ref = useRef<HTMLVideoElement>(null);
+  const cmpVid2Ref = useRef<HTMLVideoElement>(null);
+
+  const handleCmpEnded = useCallback(() => {
+    const v1 = cmpVid1Ref.current;
+    const v2 = cmpVid2Ref.current;
+    if (v1) { v1.currentTime = 0; v1.play(); }
+    if (v2) { v2.currentTime = 0; v2.play(); }
+  }, []);
+
+  const formatDate = (d?: string) => {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' }); }
+    catch { return d.slice(0, 10); }
+  };
 
   const totalPhaseTime = Object.values(data.phases).reduce(
     (sum, phase) => sum + phase.duration, 0
@@ -205,7 +227,12 @@ export default function TUGResult({ data, testId }: TUGResultProps) {
       </div>
 
       {/* 선택된 단계의 캡처 프레임 (인라인) */}
-      {selectedPhase && selectedFrame && (
+      {selectedPhase && selectedFrame && (() => {
+        const prevFrame = prevData?.phase_frames?.[selectedPhase as keyof PhaseFrames];
+        const prevClip = prevData?.phase_clips?.[selectedPhase as keyof PhaseClips];
+        const hasPrevPhase = !!(prevFrame || prevClip);
+
+        return (
         <div className={`mb-4 p-3 rounded-xl border-2 ${phaseColors[selectedPhase].border} ${phaseColors[selectedPhase].light}`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center">
@@ -220,6 +247,15 @@ export default function TUGResult({ data, testId }: TUGResultProps) {
               </span>
             </div>
             <div className="flex items-center gap-1.5">
+              {/* 이전 비교 버튼 → 모달 열기 */}
+              {hasPrevious && hasPrevPhase && (
+                <button
+                  onClick={() => setShowCompareModal(true)}
+                  className="text-xs px-2 py-1 rounded-lg font-medium transition-colors bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-700"
+                >
+                  이전 비교
+                </button>
+              )}
               <button
                 onClick={() => openModal(selectedPhase)}
                 className="text-xs px-2.5 py-1 bg-white dark:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors border border-gray-200 dark:border-gray-600"
@@ -237,6 +273,7 @@ export default function TUGResult({ data, testId }: TUGResultProps) {
             </div>
           </div>
 
+          {/* 기존 단일 보기 */}
           <div className="relative rounded-lg overflow-hidden bg-black cursor-pointer" onClick={() => openModal(selectedPhase)}>
             {data.phase_clips?.[selectedPhase as keyof PhaseClips]?.clip_filename && testId ? (
               <video
@@ -259,7 +296,8 @@ export default function TUGResult({ data, testId }: TUGResultProps) {
             </p>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* 기립/착석 분석 (있는 경우) */}
       {(data.stand_up || data.sit_down) && (
@@ -363,80 +401,149 @@ export default function TUGResult({ data, testId }: TUGResultProps) {
         </div>
       )}
 
-      {/* 기울기 분석 */}
-      {data.tilt_analysis && (
-        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">기울기 분석 (정면 영상)</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 bg-white dark:bg-gray-700 rounded-lg">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">어깨 기울기</p>
-              <p className={`font-bold ${
-                Math.abs(data.tilt_analysis.shoulder_tilt_avg) >= 5 ? 'text-orange-500'
-                : Math.abs(data.tilt_analysis.shoulder_tilt_avg) >= 2 ? 'text-yellow-500'
-                : 'text-green-500'
-              }`}>
-                평균 {data.tilt_analysis.shoulder_tilt_avg > 0 ? '+' : ''}{data.tilt_analysis.shoulder_tilt_avg}°
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-400">
-                최대 {data.tilt_analysis.shoulder_tilt_max}° | {data.tilt_analysis.shoulder_tilt_direction}
-              </p>
+      {/* 비교 모달 */}
+      {showCompareModal && selectedPhase && selectedFrame && hasPrevious && (() => {
+        const prevFrame = prevData?.phase_frames?.[selectedPhase as keyof PhaseFrames];
+        const prevClip = prevData?.phase_clips?.[selectedPhase as keyof PhaseClips];
+        const curPhaseIdx = phaseOrder.indexOf(selectedPhase as typeof phaseOrder[number]);
+
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowCompareModal(false)}>
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div className={`p-4 ${phaseColors[selectedPhase].light} border-b border-gray-200 dark:border-gray-700`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <div className={`w-8 h-8 ${phaseColors[selectedPhase].bg} rounded-full flex items-center justify-center mr-3`}>
+                    <span className="text-white font-bold">{curPhaseIdx + 1}</span>
+                  </div>
+                  <div>
+                    <h3 className={`text-lg font-bold ${phaseColors[selectedPhase].text}`}>
+                      {selectedFrame.label} - 이전 검사 비교
+                    </h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      지속 시간: {selectedFrame.duration}초
+                      {prevFrame ? ` → 이전: ${prevFrame.duration}초` : ''}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* 단계 이동 */}
+                  {curPhaseIdx > 0 && (
+                    <button onClick={() => setSelectedPhase(phaseOrder[curPhaseIdx - 1])}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-white/50" title="이전 단계">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                    </button>
+                  )}
+                  {curPhaseIdx < phaseOrder.length - 1 && (
+                    <button onClick={() => setSelectedPhase(phaseOrder[curPhaseIdx + 1])}
+                      className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-white/50" title="다음 단계">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </button>
+                  )}
+                  <button onClick={() => setShowCompareModal(false)}
+                    className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-white/50">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="p-3 bg-white dark:bg-gray-700 rounded-lg">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">골반 기울기</p>
-              <p className={`font-bold ${
-                Math.abs(data.tilt_analysis.hip_tilt_avg) >= 5 ? 'text-orange-500'
-                : Math.abs(data.tilt_analysis.hip_tilt_avg) >= 2 ? 'text-yellow-500'
-                : 'text-green-500'
-              }`}>
-                평균 {data.tilt_analysis.hip_tilt_avg > 0 ? '+' : ''}{data.tilt_analysis.hip_tilt_avg}°
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-400">
-                최대 {data.tilt_analysis.hip_tilt_max}° | {data.tilt_analysis.hip_tilt_direction}
-              </p>
+
+            {/* 비교 콘텐츠 */}
+            <div className="p-5">
+              <div className="grid grid-cols-2 gap-5">
+                {/* 현재 검사 */}
+                <div>
+                  <div className="text-center mb-3">
+                    <span className="inline-block px-4 py-1.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-sm font-semibold rounded-full">
+                      현재 검사 {testDate ? `(${formatDate(testDate)})` : ''}
+                    </span>
+                  </div>
+                  <div className="relative rounded-xl overflow-hidden bg-black">
+                    {data.phase_clips?.[selectedPhase as keyof PhaseClips]?.clip_filename && testId ? (
+                      <video
+                        ref={cmpVid1Ref}
+                        src={testApi.getPhaseClipUrl(testId, selectedPhase)}
+                        className="w-full h-auto"
+                        autoPlay muted playsInline
+                        onEnded={handleCmpEnded}
+                      />
+                    ) : (
+                      <img
+                        src={`data:image/jpeg;base64,${selectedFrame.frame}`}
+                        alt={selectedFrame.label}
+                        className="w-full h-auto"
+                      />
+                    )}
+                    <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/70 rounded text-white text-xs">
+                      {selectedFrame.duration}s
+                    </div>
+                  </div>
+                </div>
+                {/* 이전 검사 */}
+                <div>
+                  <div className="text-center mb-3">
+                    <span className="inline-block px-4 py-1.5 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 text-sm font-semibold rounded-full">
+                      이전 검사 {prevTestDate ? `(${formatDate(prevTestDate)})` : ''}
+                    </span>
+                  </div>
+                  <div className="relative rounded-xl overflow-hidden bg-black">
+                    {prevClip?.clip_filename && prevTestId ? (
+                      <video
+                        ref={cmpVid2Ref}
+                        src={testApi.getPhaseClipUrl(prevTestId, selectedPhase)}
+                        className="w-full h-auto"
+                        autoPlay muted playsInline
+                        onEnded={handleCmpEnded}
+                      />
+                    ) : prevFrame ? (
+                      <img
+                        src={`data:image/jpeg;base64,${prevFrame.frame}`}
+                        alt={prevFrame.label}
+                        className="w-full h-auto"
+                      />
+                    ) : (
+                      <div className="w-full aspect-video bg-gray-700 flex items-center justify-center rounded-xl">
+                        <span className="text-gray-400 text-sm">이전 캡처 없음</span>
+                      </div>
+                    )}
+                    {prevFrame && (
+                      <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/70 rounded text-white text-xs">
+                        {prevFrame.duration}s
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 시간 비교 바 */}
+              {prevFrame && (
+                <div className={`mt-4 p-3 rounded-xl ${phaseColors[selectedPhase].light} flex items-center justify-between`}>
+                  <span className={`text-sm font-medium ${phaseColors[selectedPhase].text}`}>지속 시간 비교</span>
+                  <div className="flex items-center gap-5 text-sm">
+                    <span className="text-gray-600 dark:text-gray-300">현재: <strong>{selectedFrame.duration}s</strong></span>
+                    <span className="text-gray-600 dark:text-gray-300">이전: <strong>{prevFrame.duration}s</strong></span>
+                    {(() => {
+                      const diff = selectedFrame.duration - prevFrame.duration;
+                      if (Math.abs(diff) < 0.01) return <span className="text-gray-400">변화 없음</span>;
+                      const pct = ((diff / prevFrame.duration) * 100).toFixed(0);
+                      return (
+                        <span className={`font-bold text-base ${diff < 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {diff < 0 ? '↓' : '↑'} {Math.abs(diff).toFixed(2)}s ({pct}%)
+                        </span>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{data.tilt_analysis.assessment}</p>
         </div>
-      )}
-
-      {/* 보행 패턴 (기존 단일 영상 TUG 호환) */}
-      {!data.tilt_analysis && data.gait_pattern && (
-        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">보행 패턴 분석</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 bg-white dark:bg-gray-700 rounded-lg">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">어깨 기울기</p>
-              <p className={`font-bold ${
-                Math.abs(data.gait_pattern.shoulder_tilt_avg) >= 5 ? 'text-orange-500'
-                : Math.abs(data.gait_pattern.shoulder_tilt_avg) >= 2 ? 'text-yellow-500'
-                : 'text-green-500'
-              }`}>
-                평균 {data.gait_pattern.shoulder_tilt_avg > 0 ? '+' : ''}{data.gait_pattern.shoulder_tilt_avg}°
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-400">최대 {data.gait_pattern.shoulder_tilt_max}°</p>
-            </div>
-            <div className="p-3 bg-white dark:bg-gray-700 rounded-lg">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">골반 기울기</p>
-              <p className={`font-bold ${
-                Math.abs(data.gait_pattern.hip_tilt_avg) >= 5 ? 'text-orange-500'
-                : Math.abs(data.gait_pattern.hip_tilt_avg) >= 2 ? 'text-yellow-500'
-                : 'text-green-500'
-              }`}>
-                평균 {data.gait_pattern.hip_tilt_avg > 0 ? '+' : ''}{data.gait_pattern.hip_tilt_avg}°
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-400">최대 {data.gait_pattern.hip_tilt_max}°</p>
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{data.gait_pattern.assessment}</p>
-        </div>
-      )}
-
-      {/* 체중이동 분석 */}
-      {data.weight_shift && data.weight_shift.lateral_sway_amplitude > 0 && (
-        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
-          <TUGWeightShift data={data.weight_shift} />
-        </div>
-      )}
+        );
+      })()}
 
       {/* 상세 모달 */}
       {showModal && selectedFrame && selectedPhase && (

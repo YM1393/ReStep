@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { patientApi, testApi } from '../services/api';
 import type { Patient, WalkTest, ComparisonResult, AnalysisData, TUGAnalysisData, PatientStats, AsymmetryWarning, PatientTag, ClinicalNormativeResponse } from '../types';
@@ -17,6 +17,7 @@ const AIReport = lazy(() => import('../components/AIReport'));
 const ClinicalTrendChart = lazy(() => import('../components/ClinicalTrendChart'));
 const CorrelationAnalysis = lazy(() => import('../components/CorrelationAnalysis'));
 const WalkingRouteCard = lazy(() => import('../components/WalkingRouteCard'));
+const TUGPhaseComparison = lazy(() => import('../components/TUGPhaseComparison'));
 
 export default function PatientDetail() {
   const { id } = useParams();
@@ -31,8 +32,6 @@ export default function PatientDetail() {
   const [notes, setNotes] = useState('');
   const [, setNoteSaving] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
-  const [overlayViewType, setOverlayViewType] = useState<'side' | 'front'>('side');
-  const [dualView, setDualView] = useState(false);
   const [stats, setStats] = useState<PatientStats | null>(null);
   const [patientTags, setPatientTags] = useState<PatientTag[]>([]);
   const [clinicalNormative, setClinicalNormative] = useState<ClinicalNormativeResponse | null>(null);
@@ -42,54 +41,8 @@ export default function PatientDetail() {
   const [emailSending, setEmailSending] = useState(false);
   const [emailResult, setEmailResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  // 순차재생: 측면 영상 끝나면 자동으로 정면 영상 전환
-  const [seqPlaying, setSeqPlaying] = useState<'side' | 'front'>('side');
 
-  const handleSequentialEnded = useCallback(() => {
-    if (seqPlaying === 'side') {
-      setSeqPlaying('front');
-      setOverlayViewType('front');
-    }
-  }, [seqPlaying]);
-
-  // 순차재생 모드 진입 시 측면부터 시작
-  useEffect(() => {
-    if (dualView) {
-      setSeqPlaying('side');
-      setOverlayViewType('side');
-    }
-  }, [dualView]);
-
-  // 영상 실시간 각도 오버레이 (DOM 직접 업데이트로 리렌더링 방지)
   const videoRef = useRef<HTMLVideoElement>(null);
-  const angleDataRef = useRef<{ time: number; shoulder_tilt: number; hip_tilt: number }[] | undefined>(undefined);
-  const shoulderLabelRef = useRef<HTMLSpanElement>(null);
-  const hipLabelRef = useRef<HTMLSpanElement>(null);
-  const angleOverlayRef = useRef<HTMLDivElement>(null);
-
-  const handleVideoTimeUpdate = useCallback(() => {
-    try {
-      const video = videoRef.current;
-      const data = angleDataRef.current;
-      if (!video || !data?.length || !angleOverlayRef.current) return;
-      const t = video.currentTime;
-      let lo = 0, hi = data.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (data[mid].time < t) lo = mid + 1;
-        else hi = mid;
-      }
-      const idx = lo > 0 && Math.abs(data[lo - 1].time - t) < Math.abs(data[lo].time - t) ? lo - 1 : lo;
-      const point = data[idx];
-      if (point && point.shoulder_tilt != null && point.hip_tilt != null) {
-        if (shoulderLabelRef.current) shoulderLabelRef.current.textContent = `${point.shoulder_tilt.toFixed(1)}°`;
-        if (hipLabelRef.current) hipLabelRef.current.textContent = `${point.hip_tilt.toFixed(1)}°`;
-        angleOverlayRef.current.style.display = '';
-      }
-    } catch {
-      if (angleOverlayRef.current) angleOverlayRef.current.style.display = 'none';
-    }
-  }, []);
 
   useEffect(() => {
     if (id) loadData(id);
@@ -187,17 +140,13 @@ export default function PatientDetail() {
     return null;
   };
 
-  // TUG: 측면/정면 오버레이 URL 각각 가져오기
-  const getTUGOverlayUrls = (test: WalkTest) => {
+  // TUG: 측면 오버레이 URL 가져오기
+  const getTUGOverlayUrl = (test: WalkTest) => {
     const data = test.analysis_data as TUGAnalysisData | null;
-    if (!data) return { side: null, front: null };
-    const sideUrl = data.side_overlay_video_filename
-      ? `/uploads/${data.side_overlay_video_filename}`
-      : (data.overlay_video_filename ? `/uploads/${data.overlay_video_filename}` : null);
-    const frontUrl = data.front_overlay_video_filename
-      ? `/uploads/${data.front_overlay_video_filename}`
-      : null;
-    return { side: sideUrl, front: frontUrl };
+    if (!data) return null;
+    if (data.side_overlay_video_filename) return `/uploads/${data.side_overlay_video_filename}`;
+    if (data.overlay_video_filename) return `/uploads/${data.overlay_video_filename}`;
+    return null;
   };
 
   if (loading) {
@@ -232,29 +181,14 @@ export default function PatientDetail() {
   const risk = latestTest && latestTest.walk_speed_mps != null && latestTest.walk_time_seconds != null
     ? calculateRiskScore(latestTest.walk_speed_mps, latestTest.walk_time_seconds) : null;
   const isTUGTest = testType === 'TUG';
-  const tugOverlayUrls = isTUGTest && latestTest ? getTUGOverlayUrls(latestTest) : null;
   const overlayUrl = isTUGTest
-    ? (overlayViewType === 'front' ? (tugOverlayUrls?.front || tugOverlayUrls?.side) : (tugOverlayUrls?.side || tugOverlayUrls?.front)) || null
+    ? (latestTest ? getTUGOverlayUrl(latestTest) : null)
     : (latestTest ? getOverlayUrl(latestTest) : null);
   const baseVideoUrl = latestTest ? testApi.getVideoUrl(latestTest) : null;
-  // TUG: 측면/정면 원본 영상 URL
-  const tugVideoUrls = (() => {
-    if (!isTUGTest || !baseVideoUrl) return null;
-    const tugData = latestTest?.analysis_data as TUGAnalysisData | null;
-    const frontFilename = tugData?.front_video_filename;
-    const frontUrl = frontFilename
-      ? `/uploads/${frontFilename}`
-      : (baseVideoUrl.includes('_side') ? baseVideoUrl.replace(/_side(\.[^.]+)$/, '_front$1') : null);
-    return { side: baseVideoUrl, front: frontUrl };
-  })();
-  const videoUrl = isTUGTest && tugVideoUrls
-    ? (overlayViewType === 'front' ? (tugVideoUrls.front || tugVideoUrls.side) : tugVideoUrls.side)
-    : baseVideoUrl;
+  const videoUrl = baseVideoUrl;
   const confidenceScore = analysisData?.confidence_score;
   const asymmetryWarnings = analysisData?.asymmetry_warnings;
 
-  // angleDataRef를 현재 analysisData로 업데이트
-  angleDataRef.current = analysisData?.angle_data;
 
   return (
     <div className="animate-fadeIn max-w-7xl mx-auto pb-20 sm:pb-0 overflow-x-hidden">
@@ -412,21 +346,6 @@ export default function PatientDetail() {
                 </div>
               </div>
 
-              {/* Calibration Method Badge */}
-              {analysisData?.calibration_method && (
-                <div className="mb-4 flex items-center gap-2">
-                  <span className="text-sm text-gray-500 dark:text-gray-400">보정 방식:</span>
-                  {analysisData.calibration_method === 'aruco' ? (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                      ArUco 마커 ({analysisData.aruco_markers_detected || 0}개 감지)
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
-                      비율 기반 보정
-                    </span>
-                  )}
-                </div>
-              )}
 
               {/* Fall Risk Score */}
               {risk && (
@@ -654,91 +573,30 @@ export default function PatientDetail() {
                       {showOverlay && overlayUrl ? (
                         <video
                           ref={videoRef}
-                          key={`overlay-${overlayViewType}`}
+                          key="overlay-side"
                           src={overlayUrl}
                           controls
-                          autoPlay={dualView && seqPlaying === 'front'}
                           className="w-full aspect-video"
                           onError={() => setShowOverlay(false)}
-                          onEnded={dualView ? handleSequentialEnded : undefined}
-                          onTimeUpdate={analysisData?.angle_data ? handleVideoTimeUpdate : undefined}
                         />
                       ) : videoUrl ? (
                         <video
                           ref={videoRef}
-                          key={`original-${overlayViewType}`}
+                          key="original-side"
                           src={videoUrl}
                           controls
-                          autoPlay={dualView && seqPlaying === 'front'}
                           className="w-full aspect-video"
-                          onEnded={dualView ? handleSequentialEnded : undefined}
-                          onTimeUpdate={analysisData?.angle_data ? handleVideoTimeUpdate : undefined}
                         />
                       ) : null}
-                      {/* 실시간 각도 오버레이 - 정면 영상에서만 표시 */}
-                      {analysisData?.angle_data && overlayViewType === 'front' && (
-                        <div ref={angleOverlayRef} className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-white px-3 py-2 rounded-lg text-sm space-y-1 pointer-events-none" style={{ display: 'none' }}>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
-                            <span>어깨</span>
-                            <span ref={shoulderLabelRef} className="font-mono font-bold ml-auto">0.0°</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-orange-400 inline-block"></span>
-                            <span>골반</span>
-                            <span ref={hipLabelRef} className="font-mono font-bold ml-auto">0.0°</span>
-                          </div>
-                        </div>
-                      )}
                     </div>
                     <div className="bg-gray-800 px-4 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                       <span className="text-white text-sm">
-                        {dualView && isTUGTest
-                          ? `순차 재생: ${seqPlaying === 'side' ? '측면' : '정면'}${showOverlay ? ' (포즈 오버레이)' : ''}`
-                          : showOverlay && overlayUrl
-                          ? (isTUGTest ? (overlayViewType === 'front' && tugOverlayUrls?.front ? '정면 포즈 오버레이 영상' : '측면 포즈 오버레이 영상') : '포즈 오버레이 영상')
-                          : (isTUGTest && tugVideoUrls ? (overlayViewType === 'front' ? '정면 원본 영상' : '측면 원본 영상') : '원본 영상')
+                        {showOverlay && overlayUrl
+                          ? (isTUGTest ? '측면 포즈 오버레이 영상' : '포즈 오버레이 영상')
+                          : (isTUGTest ? '측면 원본 영상' : '원본 영상')
                         } · {(latestTest.walk_time_seconds ?? 0).toFixed(1)}초
                       </span>
                       <div className="flex gap-2">
-                        {/* TUG 측면/정면 선택 - 동시재생이 아닐 때만 */}
-                        {isTUGTest && tugVideoUrls && !dualView && (
-                          <>
-                            <button
-                              onClick={() => setOverlayViewType('side')}
-                              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                                overlayViewType === 'side'
-                                  ? 'bg-blue-500 text-white'
-                                  : 'bg-white/10 text-white hover:bg-white/20'
-                              }`}
-                            >
-                              측면
-                            </button>
-                            <button
-                              onClick={() => setOverlayViewType('front')}
-                              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                                overlayViewType === 'front'
-                                  ? 'bg-blue-500 text-white'
-                                  : 'bg-white/10 text-white hover:bg-white/20'
-                              }`}
-                            >
-                              정면
-                            </button>
-                          </>
-                        )}
-                        {/* 동시재생 버튼 - 정면 영상이 있을 때만 */}
-                        {isTUGTest && tugVideoUrls?.front && (
-                          <button
-                            onClick={() => setDualView(!dualView)}
-                            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                              dualView
-                                ? 'bg-green-500 text-white'
-                                : 'bg-white/10 text-white hover:bg-white/20'
-                            }`}
-                          >
-                            순차재생
-                          </button>
-                        )}
                         {overlayUrl && (
                           <button
                             onClick={() => setShowOverlay(!showOverlay)}
@@ -957,6 +815,11 @@ export default function PatientDetail() {
                 <CorrelationAnalysis patientId={id} testType={testType as any} />
               )}
 
+              {/* TUG Phase Comparison */}
+              {id && isTUGTest && tests.filter(t => t.test_type === 'TUG').length >= 2 && (
+                <TUGPhaseComparison patientId={id} tests={tests} />
+              )}
+
               {/* Comparison Report */}
               {id && tests.length >= 2 && (
                 <ComparisonReport patientId={id} testId={latestTest?.id} currentTest={tests[0]} previousTest={tests[1]} />
@@ -1037,6 +900,13 @@ export default function PatientDetail() {
         <Suspense fallback={null}>
           <VideoModal
             test={selectedVideoTest}
+            previousTest={
+              selectedVideoTest.test_type === 'TUG'
+                ? tests
+                    .filter(t => t.test_type === 'TUG' && t.id !== selectedVideoTest.id && t.test_date < selectedVideoTest.test_date)
+                    .sort((a, b) => b.test_date.localeCompare(a.test_date))[0]
+                : undefined
+            }
             onClose={() => setSelectedVideoTest(null)}
           />
         </Suspense>

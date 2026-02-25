@@ -358,28 +358,6 @@ class GaitAnalyzer:
                 )
             print(f"[GAIT] Saving overlay video to: {overlay_video_path}")
 
-        # ArUco 마커 감지 (별도 1차 패스)
-        aruco_calibration = None
-        aruco_markers_detected = 0
-        try:
-            from analysis.aruco_detector import ArucoCalibration
-            aruco_cal = ArucoCalibration()
-            marker_positions, marker_sizes = aruco_cal.detect_in_video(video_path)
-            aruco_markers_detected = len(marker_positions)
-            if aruco_markers_detected >= 2:
-                aruco_calibration = aruco_cal.compute_calibration(
-                    marker_positions, marker_sizes, frame_height,
-                    patient_height_m=patient_height_cm / 100.0)
-                if aruco_calibration:
-                    print(f"[ARUCO] Calibration successful with {aruco_markers_detected} markers")
-                else:
-                    print(f"[ARUCO] Calibration fitting failed, falling back to proportional")
-            else:
-                print(f"[ARUCO] Insufficient markers ({aruco_markers_detected}), "
-                      f"falling back to proportional correction")
-        except Exception as e:
-            print(f"[ARUCO] Detection failed: {e}, falling back to proportional correction")
-
         # 프레임별 데이터 수집
         frame_data = []
         pose_3d_frames = []  # 3D 월드 랜드마크 (매 5프레임)
@@ -486,60 +464,32 @@ class GaitAnalyzer:
         time_12m = None
         idx_2m = walk_start_idx
 
-        # ArUco 캘리브레이션이 있으면 사용 (START=2m, FINISH=12m)
-        if aruco_calibration is not None:
-            aruco_time_2m = aruco_calibration.find_time_at_marker(
-                0, inv_h, times,  # marker_id=0 (START, 2m)
-                walk_start_idx, walk_end_idx, inv_h_start, inv_h_end,
-                direction=direction)
-            aruco_time_12m = aruco_calibration.find_time_at_marker(
-                1, inv_h, times,  # marker_id=1 (FINISH, 12m)
-                walk_start_idx, walk_end_idx, inv_h_start, inv_h_end,
-                direction=direction)
+        # 비례 보간 방식으로 2m/12m 시점 결정
+        if total_inv_h_change > 0:
+            inv_h_at_2m = inv_h_start + self.INV_H_START_FRACTION * total_inv_h_change
 
-            if aruco_time_2m is not None and aruco_time_12m is not None:
-                time_2m = aruco_time_2m
-                time_12m = aruco_time_12m
-                calibration_method = "aruco"
-                # idx_2m 찾기 (캡처 프레임용)
-                for i in range(walk_start_idx, walk_end_idx):
-                    if times[i] >= time_2m:
-                        idx_2m = i
-                        break
-                print(f"[ARUCO] Using ArUco calibration: t_2m={time_2m:.2f}s, t_12m={time_12m:.2f}s")
-            else:
-                print(f"[ARUCO] ArUco time interpolation failed, falling back to proportional")
+            for i in range(walk_start_idx, walk_end_idx):
+                if inv_h[i] <= inv_h_at_2m and inv_h[i + 1] > inv_h_at_2m:
+                    ratio = (inv_h_at_2m - inv_h[i]) / (inv_h[i + 1] - inv_h[i])
+                    time_2m = times[i] + ratio * (times[i + 1] - times[i])
+                    idx_2m = i
+                    break
+                elif inv_h[i] >= inv_h_at_2m:
+                    time_2m = times[i]
+                    idx_2m = i
+                    break
 
-        # ArUco 실패 시 기존 비례 보간 방식 사용
-        if calibration_method == "proportional":
-            if total_inv_h_change > 0:
-                inv_h_at_2m = inv_h_start + self.INV_H_START_FRACTION * total_inv_h_change
+        if time_2m is None:
+            time_2m = times[walk_start_idx]
+            idx_2m = walk_start_idx
 
-                for i in range(walk_start_idx, walk_end_idx):
-                    if inv_h[i] <= inv_h_at_2m and inv_h[i + 1] > inv_h_at_2m:
-                        ratio = (inv_h_at_2m - inv_h[i]) / (inv_h[i + 1] - inv_h[i])
-                        time_2m = times[i] + ratio * (times[i + 1] - times[i])
-                        idx_2m = i
-                        break
-                    elif inv_h[i] >= inv_h_at_2m:
-                        time_2m = times[i]
-                        idx_2m = i
-                        break
-
-            if time_2m is None:
-                time_2m = times[walk_start_idx]
-                idx_2m = walk_start_idx
-
-            time_12m = times[walk_end_idx]
+        time_12m = times[walk_end_idx]
 
         # raw 10m 보행 시간
         raw_walk_time = time_12m - time_2m
 
-        # 보정 계수: ArUco는 1.0, 비례 방식은 방향별 보정
-        if calibration_method == "aruco":
-            correction_factor = 1.0
-        else:
-            correction_factor = self.CORRECTION_FACTOR_AWAY
+        # 보정 계수 적용
+        correction_factor = self.CORRECTION_FACTOR_AWAY
         walk_time_seconds = raw_walk_time * correction_factor
 
         walk_speed_mps = self.MEASUREMENT_DISTANCE_M / walk_time_seconds if walk_time_seconds > 0 else 0
@@ -672,7 +622,6 @@ class GaitAnalyzer:
             "angle_data": angle_data,
             "overlay_video_filename": overlay_video_filename,
             "calibration_method": calibration_method,
-            "aruco_markers_detected": aruco_markers_detected,
             "disease_profile": self._disease_profile.name if self._disease_profile else "default",
             "disease_profile_display": self._disease_profile.display_name if self._disease_profile else "기본",
             "clinical_variables": self._calculate_clinical_variables(

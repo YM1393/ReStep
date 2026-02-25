@@ -394,7 +394,7 @@ class SimpleDB:
                    w.walk_speed_mps as latest_walk_speed_mps,
                    w.walk_time_seconds as latest_walk_time_seconds,
                    w.test_type as latest_test_type,
-                   w.video_filename as latest_video_filename,
+                   w.video_url as latest_video_url,
                    (SELECT COUNT(*) FROM walk_tests WHERE patient_id = p.id) as test_count
             FROM patients p
             LEFT JOIN walk_tests w ON w.id = (
