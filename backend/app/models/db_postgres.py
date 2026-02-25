@@ -20,14 +20,6 @@ load_dotenv()
 
 def _get_pg_dsn() -> str:
     """Build a PostgreSQL DSN from environment variables."""
-    # Support DATABASE_URL (Render provides this automatically)
-    database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        # Convert postgres:// to postgresql:// if needed
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql://", 1)
-        return database_url
-
     host = os.getenv("DB_HOST", "localhost")
     port = os.getenv("DB_PORT", "5432")
     name = os.getenv("DB_NAME", "tenm_wt")
@@ -39,7 +31,12 @@ def _get_pg_dsn() -> str:
 
 def get_db_connection():
     """Return a new PostgreSQL connection with RealDictCursor."""
-    conn = psycopg2.connect(_get_pg_dsn())
+    # Try DATABASE_URL first (Render provides this)
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        conn = psycopg2.connect(database_url)
+    else:
+        conn = psycopg2.connect(_get_pg_dsn())
     conn.autocommit = False
     return conn
 
